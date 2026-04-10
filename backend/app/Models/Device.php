@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\SensorData;
 
 class Device extends Model
 {
@@ -33,4 +34,5 @@ class Device extends Model
     {
         return $this->belongsTo(Crop::class);
     }
+
 }

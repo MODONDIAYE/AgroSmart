@@ -26,6 +26,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/devices/{id}', [DeviceController::class, 'update']);
     Route::post('/devices/{id}/toggle', [DeviceController::class, 'toggleIrrigation']);
     Route::post('/devices/{id}/sensors', [DeviceController::class, 'updateSensors']);
+    Route::get('/devices/{id}/sensors/latest', [DeviceController::class, 'latestSensorData']);
+    Route::get('/devices/{id}/sensors', [DeviceController::class, 'sensorHistory']);
+    Route::get('/devices/{id}/events', [DeviceController::class, 'getEvents']);
+    Route::post('/devices/{id}/irrigate', [DeviceController::class, 'triggerManualIrrigation']);
+    Route::post('/devices/{id}/stop', [DeviceController::class, 'stopIrrigation']);
     Route::delete('/devices/{id}', [DeviceController::class, 'destroy']);
 
     // Autres (Crops, Irrigation, Notifications)
