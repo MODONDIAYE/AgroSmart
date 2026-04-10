@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    @apply font-body bg-stone-50 text-stone-800 antialiased;
+    min-height: 100vh;
+  }
+  h1, h2, h3 { @apply font-display; }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-body font-medium text-sm rounded-xl transition-all duration-200 shadow-sm hover:shadow-md active:scale-95;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-stone-50 text-stone-700 font-body font-medium text-sm rounded-xl border border-stone-200 transition-all duration-200 shadow-sm hover:shadow-md active:scale-95;
+  }
+  .btn-danger {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-body font-medium text-sm rounded-xl transition-all duration-200 shadow-sm active:scale-95;
+  }
+  .card {
+    @apply bg-white rounded-2xl shadow-card border border-stone-100 p-6;
+  }
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl border border-stone-200 bg-white font-body text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all duration-200;
+  }
+  .badge-online {
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-primary-100 text-primary-700;
+  }
+  .badge-offline {
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-stone-100 text-stone-500;
+  }
+  .badge-warning {
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-amber-100 text-amber-700;
+  }
+  .stat-card {
+    @apply card flex flex-col gap-3 hover:shadow-card-hover transition-shadow duration-300;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-stone-300 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-stone-400; }
+
+/* Animations */
+.animate-slide-up { animation: slideUp 0.4s ease-out both; }
+.animate-fade-in  { animation: fadeIn  0.5s ease-in-out both; }
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Water drop animation */
+.drop-anim {
+  animation: drop 1.6s ease-in-out infinite;
+}
+@keyframes drop {
+  0%, 100% { transform: translateY(0)   scaleY(1); }
+  50%       { transform: translateY(5px) scaleY(0.92); }
+}
