@@ -32,7 +32,7 @@ export default function Login() {
           <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
             <Droplets className="text-white" size={22} />
           </div>
-          <span className="font-display font-bold text-white text-xl">AquaSmart</span>
+          <span className="font-display font-bold text-white text-xl">AgroSmart</span>
         </div>
         {/* Tagline */}
         <div className="relative space-y-4">
@@ -63,7 +63,7 @@ export default function Login() {
             <div className="w-8 h-8 rounded-xl bg-primary-600 flex items-center justify-center">
               <Droplets className="text-white" size={16} />
             </div>
-            <span className="font-display font-bold text-stone-900 text-lg">AquaSmart</span>
+            <span className="font-display font-bold text-stone-900 text-lg">AgroSmart</span>
           </div>
 
           <h2 className="font-display text-3xl font-bold text-stone-900 mb-1">Connexion</h2>

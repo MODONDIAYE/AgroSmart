@@ -97,18 +97,27 @@ export default function Irrigation() {
           setDevices(devRes.data.data);
           const dev = devRes.data.data[0];
           setActiveDevice(dev);
+          if (dev.crop) setSelectedCrop(dev.crop);
           const evRes = await irrigationService.getEvents(dev.id);
           if (evRes.data.success) setEvents(evRes.data.data.slice(0, 15));
         }
         if (cropRes.data.success) {
           setCrops(cropRes.data.data);
-          if (cropRes.data.data.length > 0) setSelectedCrop(cropRes.data.data[0]);
+          if (!selectedCrop && cropRes.data.data.length > 0) setSelectedCrop(cropRes.data.data[0]);
         }
       } catch (_) {}
       setLoading(false);
     };
     init();
   }, []);
+
+  useEffect(() => {
+    if (activeDevice?.crop) {
+      setSelectedCrop(activeDevice.crop);
+    } else if (!selectedCrop && crops.length > 0) {
+      setSelectedCrop(crops[0]);
+    }
+  }, [activeDevice, crops]);
 
   useEffect(() => {
     if (selectedCrop?.irrigationTimes) setTimes(selectedCrop.irrigationTimes);
@@ -277,13 +286,13 @@ export default function Irrigation() {
                 {events.map((ev) => (
                   <div key={ev.id} className="flex items-center gap-3 py-2.5 px-3 rounded-xl hover:bg-stone-50 transition-colors">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                      ev.action === 'start' ? 'bg-primary-100 text-primary-600' : 'bg-stone-100 text-stone-500'
+                      ev.action === 1 || ev.action === 'start' ? 'bg-primary-100 text-primary-600' : 'bg-stone-100 text-stone-500'
                     }`}>
-                      {ev.action === 'start' ? <Play size={12} /> : <StopCircle size={12} />}
+                      {(ev.action === 1 || ev.action === 'start') ? <Play size={12} /> : <StopCircle size={12} />}
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-medium text-stone-800 font-body">
-                        {ev.action === 'start' ? 'Démarrage' : 'Arrêt'} — <span className="text-stone-400 font-normal">{ev.mode}</span>
+                        {(ev.action === 1 || ev.action === 'start') ? 'Démarrage' : 'Arrêt'} — <span className="text-stone-400 font-normal">{ev.mode}</span>
                       </p>
                       {ev.duration_seconds && <p className="text-xs text-stone-400 font-body">{ev.duration_seconds}s</p>}
                     </div>

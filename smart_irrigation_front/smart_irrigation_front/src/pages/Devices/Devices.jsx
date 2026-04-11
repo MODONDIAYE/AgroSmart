@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Plus, Cpu, Wifi, WifiOff, MapPin, Key, Trash2, X, RefreshCw, Activity } from 'lucide-react';
-import { deviceService } from '../../services/api';
+import { deviceService, cropsService } from '../../services/api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 
-function DeviceCard({ device, onDelete }) {
+function DeviceCard({ device, crops, onAssignCrop, onDelete }) {
   const isOnline = device.status === 'online';
   return (
     <div className="card group hover:shadow-card-hover transition-all duration-300 animate-slide-up">
@@ -46,6 +46,20 @@ function DeviceCard({ device, onDelete }) {
         <div className="flex items-center gap-2 text-sm text-stone-500 font-body">
           <Activity size={13} className="text-stone-400" />
           <span>Ajouté le {format(new Date(device.created_at), 'd MMM yyyy', { locale: fr })}</span>
+        </div>
+
+        <div className="mt-4">
+          <label className="block text-xs text-stone-500 font-body mb-2">Culture associée</label>
+          <select
+            value={device.crop?.id || ''}
+            onChange={(e) => onAssignCrop(device.id, e.target.value ? +e.target.value : null)}
+            className="input-field w-full"
+          >
+            <option value="">Aucune</option>
+            {crops.map((crop) => (
+              <option key={crop.id} value={crop.id}>{crop.name}</option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -143,12 +157,16 @@ function AddDeviceModal({ onClose, onSave }) {
 
 export default function Devices() {
   const [devices, setDevices] = useState([]);
+  const [crops, setCrops] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
-    deviceService.getAll()
-      .then(({ data }) => { if (data.success) setDevices(data.data); })
+    Promise.all([deviceService.getAll(), cropsService.getAll()])
+      .then(([deviceRes, cropRes]) => {
+        if (deviceRes.data.success) setDevices(deviceRes.data.data);
+        if (cropRes.data.success) setCrops(cropRes.data.data);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -161,6 +179,20 @@ export default function Devices() {
       toast.success('Appareil supprimé');
     } catch (_) {
       toast.error('Impossible de supprimer l\'appareil');
+    }
+  };
+
+  const handleAssignCrop = async (deviceId, cropId) => {
+    try {
+      const { data } = await deviceService.update(deviceId, { crop_id: cropId });
+      if (data.success) {
+        setDevices((prev) => prev.map((device) => (
+          device.id === deviceId ? { ...device, crop: crops.find((c) => c.id === cropId) || null } : device
+        )));
+        toast.success('Culture mise à jour');
+      }
+    } catch (_) {
+      toast.error('Impossible de mettre à jour la culture');
     }
   };
 
@@ -228,7 +260,7 @@ export default function Devices() {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {devices.map((device) => (
-            <DeviceCard key={device.id} device={device} onDelete={handleDelete} />
+            <DeviceCard key={device.id} device={device} crops={crops} onAssignCrop={handleAssignCrop} onDelete={handleDelete} />
           ))}
         </div>
       )}

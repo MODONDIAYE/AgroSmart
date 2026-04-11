@@ -41,6 +41,7 @@ export default function Dashboard() {
   const [activeDevice, setActiveDevice] = useState(null);
   const [sensors, setSensors]   = useState(null);
   const [history, setHistory]   = useState([]);
+  const [readings, setReadings] = useState([]);
   const [events,  setEvents]    = useState([]);
   const [loading, setLoading]   = useState(true);
   const [pumping, setPumping]   = useState(false);
@@ -59,15 +60,20 @@ export default function Dashboard() {
   const loadSensorData = useCallback(async (deviceId) => {
     if (!deviceId) return;
     try {
-      const [latestRes, historyRes, eventsRes] = await Promise.all([
+      const [latestRes, historyRes, readingsRes, eventsRes] = await Promise.all([
         sensorService.getLatest(deviceId),
         sensorService.getHistory(deviceId, { limit: 24 }),
+        sensorService.getAll(deviceId),
         irrigationService.getEvents(deviceId),
       ]);
+
       if (latestRes.data.success) setSensors(latestRes.data.data);
       if (historyRes.data.success) setHistory(historyRes.data.data);
-      if (eventsRes.data.success)  setEvents(eventsRes.data.data.slice(0, 10));
-    } catch (_) {}
+      if (readingsRes.data.success) setReadings(readingsRes.data.data);
+      if (eventsRes.data.success) setEvents(eventsRes.data.data.slice(0, 10));
+    } catch (_) {
+      setReadings([]);
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -128,9 +134,9 @@ export default function Dashboard() {
 
   const chartData = history.map((r) => ({
     heure: format(new Date(r.timestamp), 'HH:mm', { locale: fr }),
-    Humidité: r.humidity ? Math.round(r.humidity) : null,
-    Température: r.temperature ? Math.round(r.temperature * 10) / 10 : null,
-    Eau: r.water_level ? Math.round(r.water_level) : null,
+    'Humidité sol': r.soil_humidity ? Math.round(r.soil_humidity) : null,
+    'Température': r.temperature ? Math.round(r.temperature * 10) / 10 : null,
+    'Niveau eau': r.water_level ? Math.round(r.water_level) : null,
   }));
 
   return (
@@ -198,10 +204,10 @@ export default function Dashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Droplets}    label="Humidité du sol"   value={sensors?.humidity    ? Math.round(sensors.humidity)    : null} unit="%" color="bg-water-500"   sub="Dernière lecture" />
-        <StatCard icon={Thermometer} label="Température"       value={sensors?.temperature ? Math.round(sensors.temperature * 10) / 10 : null} unit="°C" color="bg-earth-500" sub="Capteur DHT22" />
+        <StatCard icon={Droplets}    label="Humidité du sol"   value={sensors?.soil_humidity ? Math.round(sensors.soil_humidity) : null} unit="%" color="bg-water-500"   sub="Dernière lecture" />
+        <StatCard icon={Thermometer} label="Température air"    value={sensors?.air_temperature ? Math.round(sensors.air_temperature * 10) / 10 : null} unit="°C" color="bg-earth-500" sub="Capteur BME280" />
         <StatCard icon={Gauge}       label="Niveau d'eau"      value={sensors?.water_level ? Math.round(sensors.water_level) : null} unit="%" color="bg-primary-600" sub="Réservoir" />
-        <StatCard icon={Activity}    label="Dernière irrigation" value={events[0] ? format(new Date(events[0].timestamp), 'HH:mm', { locale: fr }) : null} unit="" color="bg-stone-500" sub={events[0] ? format(new Date(events[0].timestamp), 'd MMM', { locale: fr }) : 'Aucune'} />
+        <StatCard icon={Activity}    label="Flux total"         value={sensors?.liters ? Math.round(sensors.liters) : null} unit="L" color="bg-stone-500" sub="Dernière lecture" />
       </div>
 
       {/* Chart */}
@@ -228,10 +234,43 @@ export default function Dashboard() {
               <YAxis tick={{ fontSize: 11, fontFamily: '"DM Sans"' }} />
               <Tooltip contentStyle={{ borderRadius: 12, fontFamily: '"DM Sans"', fontSize: 13, border: '1px solid #e7e5e4' }} />
               <Legend wrapperStyle={{ fontFamily: '"DM Sans"', fontSize: 13 }} />
-              <Area type="monotone" dataKey="Humidité"    stroke="#3b96f5" fill="url(#gradH)" strokeWidth={2} dot={false} />
+              <Area type="monotone" dataKey="Humidité sol"    stroke="#3b96f5" fill="url(#gradH)" strokeWidth={2} dot={false} />
               <Area type="monotone" dataKey="Température" stroke="#d4801f" fill="url(#gradT)" strokeWidth={2} dot={false} />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {readings.length > 0 && (
+        <div className="card animate-slide-up">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-display font-bold text-stone-900 text-lg">Lectures brutes</h2>
+              <p className="text-sm text-stone-500 font-body mt-0.5">Toutes les lignes de sensor_data chargées depuis la base.</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm font-body">
+              <thead>
+                <tr className="text-stone-500 border-b border-stone-200">
+                  <th className="px-3 py-3">Horodatage</th>
+                  <th className="px-3 py-3">Capteur</th>
+                  <th className="px-3 py-3">Valeur</th>
+                  <th className="px-3 py-3">Unité</th>
+                </tr>
+              </thead>
+              <tbody>
+                {readings.map((row) => (
+                  <tr key={row.id} className="border-b border-stone-100 hover:bg-stone-50">
+                    <td className="px-3 py-3 text-stone-600">{format(new Date(row.created_at), 'd MMM HH:mm', { locale: fr })}</td>
+                    <td className="px-3 py-3 text-stone-700">{row.sensor_name}</td>
+                    <td className="px-3 py-3 text-stone-700">{row.value}</td>
+                    <td className="px-3 py-3 text-stone-500">{row.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -242,12 +281,12 @@ export default function Dashboard() {
           <div className="space-y-2">
             {events.map((ev) => (
               <div key={ev.id} className="flex items-center gap-3 py-2 border-b border-stone-50 last:border-0">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${ev.action === 'start' ? 'bg-primary-100 text-primary-600' : 'bg-red-100 text-red-500'}`}>
-                  {ev.action === 'start' ? <Play size={12} /> : <StopCircle size={12} />}
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${(ev.action === 1 || ev.action === 'start') ? 'bg-primary-100 text-primary-600' : 'bg-red-100 text-red-500'}`}>
+                  {(ev.action === 1 || ev.action === 'start') ? <Play size={12} /> : <StopCircle size={12} />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-stone-800 font-body capitalize">
-                    Irrigation {ev.action === 'start' ? 'démarrée' : 'arrêtée'}
+                    Irrigation {(ev.action === 1 || ev.action === 'start') ? 'démarrée' : 'arrêtée'}
                     <span className="ml-2 text-xs font-normal text-stone-400 font-body">[{ev.mode}]</span>
                   </p>
                   {ev.duration_seconds && (

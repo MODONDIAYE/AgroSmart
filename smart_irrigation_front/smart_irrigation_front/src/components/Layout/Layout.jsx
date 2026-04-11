@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Sprout, Droplets, Bell, Cpu,
-  LogOut, Menu, X, ChevronRight, Wifi
+  Settings, MessageSquare, LogOut, Menu, X, ChevronRight, Wifi,
+  Activity
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -10,8 +11,11 @@ const navItems = [
   { to: '/dashboard',     icon: LayoutDashboard, label: 'Tableau de bord' },
   { to: '/cultures',      icon: Sprout,           label: 'Mes Cultures' },
   { to: '/irrigation',    icon: Droplets,          label: 'Irrigation' },
+  { to: '/simulateur',    icon: Activity,          label: 'Simulateur' },
   { to: '/appareils',     icon: Cpu,               label: 'Appareils' },
   { to: '/notifications', icon: Bell,              label: 'Notifications' },
+  { to: '/settings',      icon: Settings,          label: 'Paramètres' },
+  { to: '/assistant',     icon: MessageSquare,     label: 'Assistant IA' },
 ];
 
 export default function Layout() {
@@ -50,7 +54,7 @@ export default function Layout() {
             </svg>
           </div>
           <div>
-            <p className="font-display font-bold text-stone-900 text-base leading-none">AquaSmart</p>
+            <p className="font-display font-bold text-stone-900 text-base leading-none">AgroSmart</p>
             <p className="text-[10px] text-stone-400 font-body mt-0.5">Irrigation Intelligente</p>
           </div>
           <button className="ml-auto lg:hidden text-stone-400" onClick={() => setOpen(false)}>
@@ -112,7 +116,7 @@ export default function Layout() {
           <button onClick={() => setOpen(true)} className="text-stone-600">
             <Menu size={22} />
           </button>
-          <span className="font-display font-bold text-stone-900">AquaSmart</span>
+          <span className="font-display font-bold text-stone-900">AgroSmart</span>
           <div className="ml-auto flex items-center gap-1.5 text-xs text-primary-600 font-body font-medium">
             <Wifi size={14} />
             En ligne

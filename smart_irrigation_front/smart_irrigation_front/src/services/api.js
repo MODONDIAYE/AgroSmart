@@ -53,6 +53,8 @@ export const deviceService = {
 export const sensorService = {
   getLatest:  (deviceId)          => api.get(`/devices/${deviceId}/sensors/latest`),
   getHistory: (deviceId, params)  => api.get(`/devices/${deviceId}/sensors`, { params }),
+  getAll:     (deviceId)          => api.get(`/devices/${deviceId}/sensors/all`),
+  generate:   (deviceId, payload) => api.post(`/devices/${deviceId}/sensors/generate`, payload),
 };
 
 /* ── IRRIGATION EVENTS ────────────────────────────── */

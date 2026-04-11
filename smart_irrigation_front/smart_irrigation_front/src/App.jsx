@@ -8,6 +8,9 @@ import Crops from './pages/Crops/Crops';
 import Irrigation from './pages/Irrigation/Irrigation';
 import Notifications from './pages/Notifications/Notifications';
 import Devices from './pages/Devices/Devices';
+import Settings from './pages/Settings/Settings';
+import Chatbot from './pages/Chatbot/Chatbot';
+import Simulator from './pages/Simulator/Simulator';
 
 function PrivateRoute({ children }) {
   const { user } = useAuth();
@@ -31,6 +34,9 @@ export default function App() {
         <Route path="cultures"      element={<Crops />} />
         <Route path="irrigation"    element={<Irrigation />} />
         <Route path="notifications" element={<Notifications />} />
+        <Route path="settings"      element={<Settings />} />
+        <Route path="assistant"     element={<Chatbot />} />
+        <Route path="simulateur"   element={<Simulator />} />
         <Route path="appareils"     element={<Devices />} />
       </Route>
 

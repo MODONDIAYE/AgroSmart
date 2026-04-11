@@ -1,4 +1,4 @@
-# 🌿 AquaSmart — Frontend React
+# 🌿 AgroSmart — Frontend React
 
 Interface web du système d'irrigation intelligent basé sur ESP32.
 
