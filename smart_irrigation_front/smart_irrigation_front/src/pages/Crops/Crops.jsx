@@ -3,17 +3,6 @@ import { Plus, Sprout, Trash2, Droplets, Clock, Leaf, X, Info } from 'lucide-rea
 import { cropsService } from '../../services/api';
 import toast from 'react-hot-toast';
 
-const PREDEFINED_CROPS = [
-  { name: 'Tomate',     water_need: 800,  humidity_threshold: 40, min_water_level: 20, irrigations_per_day: 2, icon: '🍅' },
-  { name: 'Laitue',     water_need: 400,  humidity_threshold: 50, min_water_level: 25, irrigations_per_day: 3, icon: '🥬' },
-  { name: 'Maïs',       water_need: 600,  humidity_threshold: 35, min_water_level: 15, irrigations_per_day: 1, icon: '🌽' },
-  { name: 'Oignon',     water_need: 350,  humidity_threshold: 45, min_water_level: 20, irrigations_per_day: 2, icon: '🧅' },
-  { name: 'Piment',     water_need: 500,  humidity_threshold: 42, min_water_level: 18, irrigations_per_day: 2, icon: '🌶️' },
-  { name: 'Aubergine',  water_need: 700,  humidity_threshold: 45, min_water_level: 22, irrigations_per_day: 2, icon: '🍆' },
-  { name: 'Carotte',    water_need: 450,  humidity_threshold: 40, min_water_level: 20, irrigations_per_day: 2, icon: '🥕' },
-  { name: 'Gombo',      water_need: 550,  humidity_threshold: 38, min_water_level: 15, irrigations_per_day: 2, icon: '🌿' },
-];
-
 function CropCard({ crop, onDelete, isPredefined }) {
   return (
     <div className="card group hover:shadow-card-hover transition-all duration-300 animate-slide-up">
@@ -141,14 +130,20 @@ function AddCropModal({ onClose, onSave }) {
 }
 
 export default function Crops() {
-  const [myCrops,  setMyCrops]  = useState([]);
-  const [loading,  setLoading]  = useState(true);
+  const [predefinedCrops, setPredefinedCrops] = useState([]);
+  const [customCrops, setCustomCrops] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [tab, setTab] = useState('predefined'); // 'predefined' | 'custom'
 
   useEffect(() => {
     cropsService.getAll()
-      .then(({ data }) => { if (data.success) setMyCrops(data.data.filter((c) => !c.is_predefined)); })
+      .then(({ data }) => {
+        if (data.success) {
+          setPredefinedCrops(data.data.filter((c) => c.is_predefined));
+          setCustomCrops(data.data.filter((c) => !c.is_predefined));
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -157,7 +152,7 @@ export default function Crops() {
     if (!confirm('Supprimer cette culture ?')) return;
     try {
       await cropsService.delete(id);
-      setMyCrops((prev) => prev.filter((c) => c.id !== id));
+      setCustomCrops((prev) => prev.filter((c) => c.id !== id));
       toast.success('Culture supprimée');
     } catch (_) {
       toast.error('Impossible de supprimer');
@@ -188,7 +183,7 @@ export default function Crops() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-stone-100 p-1 rounded-xl w-fit">
-        {[['predefined', 'Prédéfinies', PREDEFINED_CROPS.length], ['custom', 'Mes cultures', myCrops.length]].map(([key, label, count]) => (
+        {[['predefined', 'Prédéfinies', predefinedCrops.length], ['custom', 'Mes cultures', customCrops.length]].map(([key, label, count]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -207,9 +202,13 @@ export default function Crops() {
       {/* Crops grid */}
       {tab === 'predefined' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {PREDEFINED_CROPS.map((crop) => (
-            <CropCard key={crop.name} crop={crop} isPredefined={true} />
-          ))}
+          {predefinedCrops.length > 0 ? predefinedCrops.map((crop) => (
+            <CropCard key={crop.id} crop={crop} isPredefined={true} />
+          )) : (
+            <div className="card col-span-full p-10 text-center text-stone-500">
+              Aucune culture prédéfinie n’a été trouvée. Exécutez le seeder ou ajoutez-en une manuellement.
+            </div>
+          )}
         </div>
       )}
 
@@ -222,22 +221,9 @@ export default function Crops() {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
               </svg>
             </div>
-          ) : myCrops.length === 0 ? (
-            <div className="card flex flex-col items-center py-16 text-center animate-fade-in">
-              <div className="w-16 h-16 rounded-2xl bg-stone-100 flex items-center justify-center mb-4">
-                <Sprout size={28} className="text-stone-400" />
-              </div>
-              <h3 className="font-display font-bold text-stone-700 text-lg mb-2">Aucune culture personnalisée</h3>
-              <p className="text-stone-400 text-sm font-body max-w-xs mb-6">
-                Créez votre première culture personnalisée en définissant ses besoins spécifiques.
-              </p>
-              <button onClick={() => setShowModal(true)} className="btn-primary">
-                <Plus size={18} /> Ajouter une culture
-              </button>
-            </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {myCrops.map((crop) => (
+              {customCrops.map((crop) => (
                 <CropCard key={crop.id} crop={crop} isPredefined={false} onDelete={handleDelete} />
               ))}
             </div>
@@ -248,7 +234,7 @@ export default function Crops() {
       {showModal && (
         <AddCropModal
           onClose={() => setShowModal(false)}
-          onSave={(c) => setMyCrops((prev) => [c, ...prev])}
+          onSave={(c) => setCustomCrops((prev) => [c, ...prev])}
         />
       )}
     </div>

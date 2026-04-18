@@ -1,21 +1,27 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Models;
 
-use App\Models\Notification;
-use Illuminate\Http\Request;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use App\Models\Device;
 
-class NotificationController extends Controller
+class Notification extends Model
 {
-    public function index(Request $request) {
-        $notifications = Notification::where('user_id', $request->user()->id)
-                                     ->orderBy('created_at', 'desc')
-                                     ->get();
-        return response()->json(['success' => true, 'data' => $notifications]);
-    }
+    use HasFactory;
 
-    public function markAsRead($id) {
-        Notification::where('id', $id)->update(['is_read' => true]);
-        return response()->json(['success' => true]);
+    protected $fillable = [
+        'user_id',
+        'device_id',
+        'title',
+        'message',
+        'body',
+        'type',
+        'is_read',
+    ];
+
+    public function device()
+    {
+        return $this->belongsTo(Device::class);
     }
 }

@@ -28,6 +28,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/devices/{id}/sensors', [DeviceController::class, 'updateSensors']);
     Route::get('/devices/{id}/sensors/latest', [DeviceController::class, 'latestSensorData']);
     Route::get('/devices/{id}/sensors', [DeviceController::class, 'sensorHistory']);
+    Route::get('/devices/{id}/sensors/all', [DeviceController::class, 'allSensorData']);
+    Route::post('/devices/{id}/sensors/generate', [DeviceController::class, 'generateRandomSensorData']);
     Route::get('/devices/{id}/events', [DeviceController::class, 'getEvents']);
     Route::post('/devices/{id}/irrigate', [DeviceController::class, 'triggerManualIrrigation']);
     Route::post('/devices/{id}/stop', [DeviceController::class, 'stopIrrigation']);
@@ -41,4 +43,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/irrigation-times/{id}', [IrrigationTimeController::class, 'destroy']);
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::put('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::put('/notifications/read-all', [NotificationController::class, 'markAllRead']);
 });

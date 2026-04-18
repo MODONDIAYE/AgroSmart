@@ -18,9 +18,10 @@ class CropsController extends Controller
         $data = $request->validate([
             'name' => 'required|string',
             'water_need' => 'required|integer',
-            'humidity_threshold' =>       'required|integer',
+            'humidity_threshold' => 'required|integer',
             'min_water_level' => 'required|integer',
             'irrigations_per_day' => 'required|integer',
+            'description' => 'nullable|string',
         ]);
 
         $data['user_id'] = $request->user()->id;

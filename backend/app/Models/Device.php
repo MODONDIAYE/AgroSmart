@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\Crops;
 use App\Models\SensorData;
 
 class Device extends Model
@@ -32,7 +33,14 @@ class Device extends Model
      */
     public function crop()
     {
-        return $this->belongsTo(Crop::class);
+        return $this->belongsTo(Crops::class);
     }
 
+    /**
+     * Les lectures des capteurs liées à l'appareil
+     */
+    public function sensorReadings()
+    {
+        return $this->hasMany(SensorData::class, 'device_id');
+    }
 }
