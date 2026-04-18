@@ -104,7 +104,7 @@ export default function Settings() {
           <div className="space-y-3 text-sm text-stone-600">
             <div className="flex items-center gap-2">
               <Phone size={16} className="text-primary-600" />
-              <a href="tel:+33123456789" className="text-primary-700">+33 1 23 45 67 89</a>
+              <a href="tel:+33123456789" className="text-primary-700">+221 78 483 11 92</a>
             </div>
             <div className="flex items-center gap-2">
               <Mail size={16} className="text-primary-600" />

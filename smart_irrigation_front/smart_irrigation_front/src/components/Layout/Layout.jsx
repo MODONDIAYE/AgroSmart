@@ -46,8 +46,8 @@ export default function Layout() {
         ${open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
         {/* Logo */}
-        <div className="flex items-center gap-3 px-6 py-5 border-b border-stone-100">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-sm">
+        <div className="flex items-center gap-3 px-6 py-5 border-b border-stone-100 bg-mint-50">
+          <div className="w-9 h-9 rounded-3xl bg-gradient-to-br from-mint-300 to-forest-700 flex items-center justify-center shadow-sm">
             <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white">
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
               <path d="M12 2a10 10 0 0 0-7.07 17.07C6.4 17.4 9 15.5 9 12c0-1.5.5-3 2-4 .7-.5 1-.7 1-1s-.3-.5-1-1c-1.5-1-2-2.5-2-4 2 0 4 1 5 3 1-2 3-3 5-3 0 1.5-.5 3-2 4-.7.5-1 .7-1 1s.3.5 1 1c1.5 1 2 2.5 2 4 0 3.5 2.6 5.4 4.07 7.07A10 10 0 0 0 12 2z"/>
@@ -89,9 +89,9 @@ export default function Layout() {
         </nav>
 
         {/* User card */}
-        <div className="px-3 py-4 border-t border-stone-100">
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-stone-50">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-earth-400 to-earth-600 flex items-center justify-center text-white text-xs font-bold font-body shrink-0">
+        <div className="px-3 py-4 border-t border-stone-100 bg-mint-50">
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-3xl bg-white shadow-sm">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-mint-400 to-forest-700 flex items-center justify-center text-white text-xs font-bold font-body shrink-0">
               {user?.username?.[0]?.toUpperCase() || 'U'}
             </div>
             <div className="flex-1 min-w-0">
@@ -113,11 +113,11 @@ export default function Layout() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar (mobile) */}
         <header className="lg:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-stone-100 shadow-sm">
-          <button onClick={() => setOpen(true)} className="text-stone-600">
+          <button onClick={() => setOpen(true)} className="text-forest-700">
             <Menu size={22} />
           </button>
-          <span className="font-display font-bold text-stone-900">AgroSmart</span>
-          <div className="ml-auto flex items-center gap-1.5 text-xs text-primary-600 font-body font-medium">
+          <span className="font-display font-bold text-forest-900">AgroSmart</span>
+          <div className="ml-auto flex items-center gap-1.5 text-xs text-forest-600 font-body font-medium">
             <Wifi size={14} />
             En ligne
           </div>
