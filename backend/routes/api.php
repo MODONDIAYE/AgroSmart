@@ -12,6 +12,10 @@ use App\Http\Controllers\DeviceController; // <--- Importation directe
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 
+use App\Http\Controllers\SensorController;
+
+Route::post('/sensor-data', [SensorController::class, 'store']);
+Route::post('/update-sensor', [SensorController::class, 'store']);
 /* --- Routes Protégées --- */
 Route::middleware('auth:sanctum')->group(function () {
     
