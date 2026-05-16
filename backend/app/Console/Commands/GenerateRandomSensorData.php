@@ -27,6 +27,7 @@ class GenerateRandomSensorData extends Command
 
         $sensorTypes = [
             ['name' => 'Capacitive_Soil_Humidity', 'unit' => '%', 'min' => 30, 'max' => 80],
+            ['name' => 'DS18B20_Soil_Temperature', 'unit' => '°C', 'min' => 10, 'max' => 35],
             ['name' => 'BME280_Temperature', 'unit' => '°C', 'min' => 16, 'max' => 32],
             ['name' => 'BME280_Humidity', 'unit' => '%', 'min' => 35, 'max' => 85],
             ['name' => 'Ultrasonic_Water_Level', 'unit' => '%', 'min' => 10, 'max' => 100],

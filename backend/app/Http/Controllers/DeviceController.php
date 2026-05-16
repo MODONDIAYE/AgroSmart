@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Device;
-use App\Models\IrrigationEven;
+use App\Models\IrrigationEven as IrrigationEvent;
 use App\Models\Notification;
 use App\Models\SensorData;
 use Illuminate\Http\Request;
@@ -131,12 +131,17 @@ class DeviceController extends Controller
         $device = Device::findOrFail($id);
 
         $data = $request->validate([
-            'soil_humidity' => 'nullable|numeric',
+            'soil_humidity'   => 'nullable|numeric',
+            'soil_temperature'=> 'nullable|numeric', // DS18B20 température du sol
             'air_temperature' => 'nullable|numeric',
-            'air_humidity' => 'nullable|numeric',
-            'water_level' => 'nullable|numeric',
-            'liters' => 'nullable|numeric',
-            'timestamp'   => 'nullable|date',
+            'air_humidity'    => 'nullable|numeric',
+            'water_level'     => 'nullable|numeric',
+            'liters'          => 'nullable|numeric', // Débit du cycle courant (L)
+            'flow_rate'       => 'nullable|numeric', // Débit en L/min (info complémentaire)
+            'total_volume'    => 'nullable|numeric', // Volume cumulé envoyé par l'ESP32
+            'bme_temperature' => 'nullable|numeric', // BME280 température
+            'bme_pressure'    => 'nullable|numeric', // BME280 pression (hPa)
+            'timestamp'       => 'nullable|date',
         ]);
 
         $sensorRows = [];
@@ -148,6 +153,17 @@ class DeviceController extends Controller
                 'sensor_name' => 'Capacitive_Soil_Humidity',
                 'value'       => $data['soil_humidity'],
                 'unit'        => '%',
+                'created_at'  => $timestamp,
+                'updated_at'  => $timestamp,
+            ];
+        }
+        // DS18B20 - Température du sol
+        if (isset($data['soil_temperature'])) {
+            $sensorRows[] = [
+                'device_id'   => $device->id,
+                'sensor_name' => 'DS18B20_Soil_Temperature',
+                'value'       => $data['soil_temperature'],
+                'unit'        => '°C',
                 'created_at'  => $timestamp,
                 'updated_at'  => $timestamp,
             ];
@@ -188,6 +204,52 @@ class DeviceController extends Controller
                 'sensor_name' => 'Flowmeter_Liters',
                 'value'       => $data['liters'],
                 'unit'        => 'L',
+                'created_at'  => $timestamp,
+                'updated_at'  => $timestamp,
+            ];
+        }
+
+        // Débit instantané en L/min (envoyé par le nouvel Arduino)
+        if (isset($data['flow_rate'])) {
+            $sensorRows[] = [
+                'device_id'   => $device->id,
+                'sensor_name' => 'Flowmeter_Liters',
+                'value'       => $data['flow_rate'],
+                'unit'        => 'L/min',
+                'created_at'  => $timestamp,
+                'updated_at'  => $timestamp,
+            ];
+        }
+
+        // Volume total cumulé envoyé directement par l'ESP32
+        if (isset($data['total_volume'])) {
+            $sensorRows[] = [
+                'device_id'   => $device->id,
+                'sensor_name' => 'Flowmeter_Total_Volume',
+                'value'       => $data['total_volume'],
+                'unit'        => 'L',
+                'created_at'  => $timestamp,
+                'updated_at'  => $timestamp,
+            ];
+        }
+
+        // Champs supplémentaires BME280
+        if (isset($data['bme_temperature'])) {
+            $sensorRows[] = [
+                'device_id'   => $device->id,
+                'sensor_name' => 'BME280_Temperature',
+                'value'       => $data['bme_temperature'],
+                'unit'        => '°C',
+                'created_at'  => $timestamp,
+                'updated_at'  => $timestamp,
+            ];
+        }
+        if (isset($data['bme_pressure'])) {
+            $sensorRows[] = [
+                'device_id'   => $device->id,
+                'sensor_name' => 'BME280_Pressure',
+                'value'       => $data['bme_pressure'],
+                'unit'        => 'hPa',
                 'created_at'  => $timestamp,
                 'updated_at'  => $timestamp,
             ];
@@ -234,9 +296,19 @@ class DeviceController extends Controller
 
         $device->update(['status' => 'online']);
 
+        // --- AJOUT POUR LE CONTROLE DU RELAIS ---
+        // On cherche le dernier événement d'irrigation pour ce dispositif
+        $lastEvent = IrrigationEvent::where('device_id', $device->id)
+            ->orderBy('timestamp', 'desc')
+            ->first();
+
+        // Si l'action est 1, on envoie true à l'ESP32. Si c'est 0 ou s'il n'y a pas d'événement, false.
+        $irrigationStatus = ($lastEvent && $lastEvent->action == 1);
+
         return response()->json([
             'success' => true,
-            'message' => 'Données capteurs reçues avec succès'
+            'message' => 'Données capteurs reçues avec succès',
+            'irrigation' => $irrigationStatus // Envoie true ou false à l'ESP32
         ]);
     }
 
@@ -246,7 +318,7 @@ class DeviceController extends Controller
     public function getEvents(Request $request, $id)
     {
         $device = $request->user()->devices()->findOrFail($id);
-        $events = IrrigationEven::where('device_id', $device->id)
+        $events = IrrigationEvent::where('device_id', $device->id)
             ->orderByDesc('timestamp')
             ->limit(10)
             ->get();
@@ -266,7 +338,7 @@ class DeviceController extends Controller
             'mode'             => 'nullable|string',
         ]);
 
-        $event = IrrigationEven::create([
+        $event = IrrigationEvent::create([
             'device_id'       => $device->id,
             'action'          => 1,
             'mode'            => $data['mode'] ?? 'Manual',
@@ -286,7 +358,7 @@ class DeviceController extends Controller
     {
         $device = $request->user()->devices()->findOrFail($id);
 
-        $event = IrrigationEven::create([
+        $event = IrrigationEvent::create([
             'device_id' => $device->id,
             'action'    => 0,
             'mode'      => 'Manual',
@@ -300,52 +372,57 @@ class DeviceController extends Controller
 
     /**
      * Dernière lecture du capteur pour un appareil
+     * Prend la valeur la plus récente de chaque type de capteur
      */
     public function latestSensorData(Request $request, $id)
     {
         $request->user()->devices()->findOrFail($id);
 
-        $rows = SensorData::query()
-            ->when(Schema::hasColumn((new SensorData())->getTable(), 'device_id'), fn ($q) => $q->where('device_id', $id))
-            ->whereIn('sensor_name', [
-                'Capacitive_Soil_Humidity',
-                'BME280_Temperature',
-                'BME280_Humidity',
-                'Ultrasonic_Water_Level',
-                'Flowmeter_Liters',
-            ])
-            ->orderByDesc('created_at')
-            ->get();
-
         $latest = [
-            'soil_humidity' => null,
-            'air_temperature' => null,
-            'air_humidity' => null,
-            'water_level' => null,
-            'liters' => null,
-            'timestamp' => null,
+            'soil_humidity'    => null,
+            'soil_temperature' => null,
+            'air_temperature'  => null,
+            'air_humidity'     => null,
+            'water_level'      => null,
+            'liters'           => null,
+            'esp32_total_volume'=> null, // Volume cumulé envoyé par l'ESP32
+            'total_volume'     => null,  // Somme cumulée calculée côté backend
+            'timestamp'        => null,
         ];
 
-        foreach ($rows as $row) {
-            if ($row->sensor_name === 'Capacitive_Soil_Humidity') {
-                $latest['soil_humidity'] = $row->value;
-            }
-            if ($row->sensor_name === 'BME280_Temperature') {
-                $latest['air_temperature'] = $row->value;
-            }
-            if ($row->sensor_name === 'BME280_Humidity') {
-                $latest['air_humidity'] = $row->value;
-            }
-            if ($row->sensor_name === 'Ultrasonic_Water_Level') {
-                $latest['water_level'] = $row->value;
-            }
-            if ($row->sensor_name === 'Flowmeter_Liters') {
-                $latest['liters'] = $row->value;
-            }
-            if (!$latest['timestamp'] || $row->created_at > $latest['timestamp']) {
-                $latest['timestamp'] = $row->created_at;
+        $sensorMap = [
+            'Capacitive_Soil_Humidity'  => 'soil_humidity',
+            'DS18B20_Soil_Temperature'  => 'soil_temperature',
+            'BME280_Temperature'        => 'air_temperature',
+            'BME280_Humidity'           => 'air_humidity',
+            'Ultrasonic_Water_Level'    => 'water_level',
+            'Flowmeter_Liters'          => 'liters',
+            'Flowmeter_Total_Volume'    => 'esp32_total_volume',
+        ];
+
+        // Pour chaque capteur, récupérer UNIQUEMENT la ligne la plus récente
+        foreach ($sensorMap as $sensorName => $field) {
+            $row = SensorData::where('device_id', $id)
+                ->where('sensor_name', $sensorName)
+                ->orderByDesc('created_at')
+                ->first();
+
+            if ($row) {
+                $latest[$field] = $row->value;
+                // Timestamp = le plus récent parmi tous les capteurs
+                if (!$latest['timestamp'] || $row->created_at > $latest['timestamp']) {
+                    $latest['timestamp'] = $row->created_at;
+                }
             }
         }
+
+        // Volume total = somme de toutes les mesures Flowmeter_Liters pour ce device
+        $latest['total_volume'] = round(
+            (float) SensorData::where('device_id', $id)
+                ->where('sensor_name', 'Flowmeter_Liters')
+                ->sum('value'),
+            3
+        );
 
         return response()->json(['success' => true, 'data' => $latest]);
     }
@@ -365,6 +442,7 @@ class DeviceController extends Controller
 
         $historicalRows = $query->whereIn('sensor_name', [
                 'Capacitive_Soil_Humidity',
+                'DS18B20_Soil_Temperature',
                 'BME280_Temperature',
                 'BME280_Humidity',
                 'Ultrasonic_Water_Level',
@@ -385,6 +463,7 @@ class DeviceController extends Controller
                 'temperature' => null,
                 'air_humidity' => null,
                 'soil_humidity' => null,
+                'soil_temperature' => null,
                 'water_level' => null,
                 'liters' => null,
             ];
@@ -398,6 +477,9 @@ class DeviceController extends Controller
                 }
                 if ($row->sensor_name === 'Capacitive_Soil_Humidity') {
                     $entry['soil_humidity'] = $row->value;
+                }
+                if ($row->sensor_name === 'DS18B20_Soil_Temperature') {
+                    $entry['soil_temperature'] = $row->value;
                 }
                 if ($row->sensor_name === 'Ultrasonic_Water_Level') {
                     $entry['water_level'] = $row->value;
@@ -441,6 +523,7 @@ class DeviceController extends Controller
 
         $sensorTypes = [
             ['name' => 'Capacitive_Soil_Humidity', 'unit' => '%', 'min' => 30, 'max' => 80],
+            ['name' => 'DS18B20_Soil_Temperature', 'unit' => '°C', 'min' => 10, 'max' => 35],
             ['name' => 'BME280_Temperature', 'unit' => '°C', 'min' => 16, 'max' => 32],
             ['name' => 'BME280_Humidity', 'unit' => '%', 'min' => 35, 'max' => 85],
             ['name' => 'Ultrasonic_Water_Level', 'unit' => '%', 'min' => 10, 'max' => 100],

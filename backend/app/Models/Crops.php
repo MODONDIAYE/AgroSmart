@@ -10,9 +10,13 @@ class Crops extends Model
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'name', 'water_need', 'description', 
-        'humidity_threshold', 'min_water_level', 
+        'user_id', 'name', 'water_need', 'description',
+        'humidity_threshold', 'min_water_level',
         'irrigations_per_day', 'is_predefined'
+    ];
+
+    protected $casts = [
+        'is_predefined' => 'boolean',
     ];
 
     public function user() {
@@ -20,6 +24,7 @@ class Crops extends Model
     }
 
     public function irrigationTimes() {
-        return $this->hasMany(IrrigationTime::class);
+        // La colonne FK dans irrigation_times est 'crop_id', pas 'crops_id'
+        return $this->hasMany(IrrigationTime::class, 'crop_id');
     }
 }

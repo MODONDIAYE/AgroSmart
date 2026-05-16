@@ -8,9 +8,12 @@ use Illuminate\Http\Request;
 class CropsController extends Controller
 {
     public function index(Request $request) {
-        $crops = Crops::where('user_id', $request->user()->id)
-                     ->orWhere('is_predefined', true)
-                     ->get();
+        $crops = Crops::where(function ($q) use ($request) {
+                        $q->where('user_id', $request->user()->id);
+                    })
+                    ->orWhere('is_predefined', true)
+                    ->with('irrigationTimes')
+                    ->get();
         return response()->json(['success' => true, 'data' => $crops]);
     }
 
