@@ -10,6 +10,6 @@ class IrrigationTime extends Model
     protected $fillable = ['crop_id', 'time', 'order_index'];
 
     public function crop() {
-        return $this->belongsTo(Crop::class);
+        return $this->belongsTo(Crops::class);
     }
 }
