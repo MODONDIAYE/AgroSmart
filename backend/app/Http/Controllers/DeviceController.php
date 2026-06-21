@@ -307,52 +307,22 @@ class DeviceController extends Controller
             }
         }
 
-        // ══════════════════════════════════════════════════════
-        //  DÉCISION pump_command → réponse à l'ESP32
-        //
-        //  Logique de priorité :
-        //  1. Switch physique actif (manual_mode=1)
-        //     → L'ESP32 gère lui-même, on lui confirme juste pump=1
-        //  2. Bouton Dashboard (dernier événement BDD)
-        //     → "Irriguer" = action 1, "Arrêter" = action 0
-        //  3. Mode automatique (seuils culture)
-        //     → Sol trop sec ET cuve sécurisée → on arrose
-        //  4. Sécurité : cuve vide → on coupe toujours
-        // ══════════════════════════════════════════════════════
-
-        // Priorité 1 : switch physique actif → ESP32 se gère seul
+        // ── Priorité 1 : switch physique actif → ESP32 se gère seul
         if (isset($data['manual_mode']) && $data['manual_mode'] == 1) {
             return response()->json([
                 'success'      => true,
-                'message'      => 'Mode physique actif — ESP32 gère la pompe',
-                'pump_command' => 1,  // confirme l'état ON du switch
+                'message'      => 'Mode physique actif',
+                'pump_command' => 1,
             ]);
         }
 
-        // Priorité 2 : dernier ordre du Dashboard (boutons Irriguer / Arrêter)
+        // ── Priorité 2 : dernier ordre du Dashboard (boutons Irriguer / Arrêter)
+        // C'est le seul mode contrôlé depuis l'app — pas de mode auto
         $lastEvent = IrrigationEvent::where('device_id', $device->id)
             ->orderBy('timestamp', 'desc')
             ->first();
-        $webCommandActive = ($lastEvent && $lastEvent->action == 1);
 
-        // Priorité 3 : mode automatique par seuils de la culture
-        $autoConditionActive = false;
-        if ($crop && isset($data['soil_humidity']) && isset($data['water_level'])) {
-            if (
-                $data['soil_humidity'] < $crop->humidity_threshold &&
-                $data['water_level'] >= $crop->min_water_level
-            ) {
-                $autoConditionActive = true;
-            }
-        }
-
-        // Décision finale
-        $pumpCommand = ($webCommandActive || $autoConditionActive) ? 1 : 0;
-
-        // Sécurité absolue : cuve vide → pompe coupée quoi qu'il arrive
-        if (isset($data['water_level']) && $data['water_level'] <= 2) {
-            $pumpCommand = 0;
-        }
+        $pumpCommand = ($lastEvent && $lastEvent->action == 1) ? 1 : 0;
 
         return response()->json([
             'success'      => true,
