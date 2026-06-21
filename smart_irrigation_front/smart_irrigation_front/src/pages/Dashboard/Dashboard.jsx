@@ -161,7 +161,9 @@ export default function Dashboard() {
   const [readings, setReadings]     = useState([]);
   const [events, setEvents]         = useState([]);
   const [loading, setLoading]       = useState(true);
-  const [pumping, setPumping]       = useState(false);
+  const [pumping, setPumping]       = useState(false);   // bouton Irriguer en cours
+  const [stopping, setStopping]     = useState(false);   // bouton Arrêter en cours
+  const [isPumpOn, setIsPumpOn]     = useState(false);   // état réel de la pompe
   const [refreshing, setRefreshing] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [lastSync, setLastSync]     = useState(null);
@@ -200,10 +202,19 @@ export default function Dashboard() {
       if (latestRes.data.success)  setSensors(latestRes.data.data);
       if (historyRes.data.success) setHistory(historyRes.data.data);
       if (readingsRes.data.success) {
-        setReadings(readingsRes.data.data);
-        setReadingsPage(1); // retour à la page 1 à chaque refresh
+        const raw = readingsRes.data.data;
+        // Supporte pagination Laravel (data.data) ou tableau direct
+        setReadings(Array.isArray(raw) ? raw : (raw.data ?? []));
+        setReadingsPage(1);
       }
-      if (eventsRes.data.success)  setEvents(eventsRes.data.data.slice(0, 10));
+      if (eventsRes.data.success) {
+        const evList = eventsRes.data.data.slice(0, 10);
+        setEvents(evList);
+        // Déduit l'état de la pompe depuis le dernier événement
+        if (evList.length > 0) {
+          setIsPumpOn(evList[0].action === 1 || evList[0].action === 'start');
+        }
+      }
 
       setLastSync(new Date());
       if (!silent) setLiveCount(c => c + 1);
@@ -252,12 +263,13 @@ export default function Dashboard() {
 
   // ── Irrigation manuelle ─────────────────────────────────────
   const handleManualIrrigate = async () => {
-    if (!activeDevice) return;
+    if (!activeDevice || pumping) return;
     try {
       setPumping(true);
       await irrigationService.triggerManual(activeDevice.id, { duration_seconds: 300, mode: 'Manual' });
-      toast.success('Irrigation démarrée !');
-      setTimeout(() => loadSensorData(activeDevice.id, true), 1500);
+      setIsPumpOn(true);  // Feedback immédiat — l'ESP32 appliquera dans les 5s
+      toast.success('Ordre envoyé — la pompe va s\'activer dans ~5s');
+      setTimeout(() => loadSensorData(activeDevice.id, true), 2000);
     } catch (_) {
       toast.error("Impossible de démarrer l'irrigation");
     } finally {
@@ -266,12 +278,17 @@ export default function Dashboard() {
   };
 
   const handleStop = async () => {
-    if (!activeDevice) return;
+    if (!activeDevice || stopping) return;
     try {
+      setStopping(true);
       await irrigationService.stopIrrigation(activeDevice.id);
-      toast.success('Irrigation arrêtée');
+      setIsPumpOn(false); // Feedback immédiat — l'ESP32 appliquera dans les 5s
+      toast.success('Ordre envoyé — la pompe va s\'arrêter dans ~5s');
+      setTimeout(() => loadSensorData(activeDevice.id, true), 2000);
     } catch (_) {
       toast.error("Impossible d'arrêter");
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -386,13 +403,35 @@ export default function Dashboard() {
           {activeDevice.location && (
             <p className="text-sm text-stone-500 font-body sm:ml-4">📍 {activeDevice.location}</p>
           )}
-          <div className="sm:ml-auto flex gap-2">
-            <button onClick={handleManualIrrigate} disabled={pumping} className="btn-primary py-2">
+          <div className="sm:ml-auto flex items-center gap-3">
+            {/* Indicateur état pompe */}
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-body font-medium transition-all ${
+              isPumpOn
+                ? 'bg-primary-50 border-primary-300 text-primary-700'
+                : 'bg-stone-50 border-stone-200 text-stone-500'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${isPumpOn ? 'bg-primary-500 animate-pulse' : 'bg-stone-300'}`} />
+              Pompe {isPumpOn ? 'ON' : 'OFF'}
+            </div>
+
+            <button
+              onClick={handleManualIrrigate}
+              disabled={pumping || isPumpOn}
+              className={`btn-primary py-2 transition-all ${isPumpOn ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={isPumpOn ? 'La pompe est déjà active' : 'Démarrer l\'irrigation'}
+            >
               <Play size={15} />
-              {pumping ? 'En cours…' : 'Irriguer'}
+              {pumping ? 'Envoi…' : 'Irriguer'}
             </button>
-            <button onClick={handleStop} className="btn-danger py-2">
-              <StopCircle size={15} /> Arrêter
+
+            <button
+              onClick={handleStop}
+              disabled={stopping || !isPumpOn}
+              className={`btn-danger py-2 transition-all ${!isPumpOn ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={!isPumpOn ? 'La pompe est déjà arrêtée' : 'Arrêter l\'irrigation'}
+            >
+              <StopCircle size={15} />
+              {stopping ? 'Envoi…' : 'Arrêter'}
             </button>
           </div>
         </div>

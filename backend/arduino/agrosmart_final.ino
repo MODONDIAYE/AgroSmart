@@ -1,258 +1,269 @@
-/*
- * ============================================================
- *  AgroSmart — ESP32 Code Final Global (Version DHT11)
- *  Carte    : LILYGO ESP32 (Profil : ESP32 Dev Module)
- *  Capteurs : Capacitif Sol, DS18B20, YF-TM02, HC-SR04, DHT11
- *
- *  Endpoint : POST /api/devices/{DEVICE_ID}/sensors
- *  Table    : sensor_data
- *
- *  Champs envoyés à l'API :
- *    soil_humidity    → Capacitive_Soil_Humidity   (%)
- *    soil_temperature → DS18B20_Soil_Temperature   (°C)
- *    air_temperature  → BME280_Temperature         (°C)  [DHT11]
- *    air_humidity     → BME280_Humidity            (%)   [DHT11]
- *    water_level      → Ultrasonic_Water_Level     (%)
- *    flow_rate        → Flowmeter_Liters           (L/min)
- *    total_volume     → Flowmeter_Total_Volume     (L)
- *
- *  Bibliothèques requises (Arduino Library Manager) :
- *    - ArduinoJson          (Benoit Blanchon, v6.x)
- *    - OneWire              (Paul Stoffregen)
- *    - DallasTemperature    (Miles Burton)
- *    - DHT sensor library   (Adafruit)
- *    - Adafruit Unified Sensor
- * ============================================================
- */
-
-#include <WiFi.h>
-#include <HTTPClient.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include <ArduinoJson.h>
 #include <DHT.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 
-// ============================================================
-//  CONFIGURATION
-// ============================================================
-const char* SSID    = "Etudiants_ISM";
-const char* PASS    = "Etudiant123&";
-const char* API_URL = "http://172.20.61.163:8000/api/devices/3/sensors"; // ← espace retiré
-const char* TOKEN   = "7|sLBdWts9JCxrf2hfe15VUT8e0DowQpgQNcRd9CzE61640e6b";
+// --- CONFIGURATION WI-FI & API ---
+const char* SSID     = "Etudiants_ISM";
+const char* PASSWORD = "Etudiant123&";
+const char* API_URL  = "http://192.30.0.54:8000/api/devices/3/sensors";
+const char* TOKEN    = "19|u8UlaD1fse3H0ZpnNaPNy6A0oD61OLCowOzFdfD5f16182a0";
 
-// Intervalle d'envoi (ms)
-const unsigned long SEND_INTERVAL_MS = 3000;
+// --- ATTRIBUTION DES PINS ---
+#define SOIL_PIN    35
+#define FLOW_PIN    18
+#define TEMP_PIN    26
+#define DHTPIN      21
+#define RELAY_PIN   23
+#define SWITCH_PIN  32
+#define TRIG_PIN    14
+#define ECHO_PIN    25
+#define DHTTYPE DHT11
 
-// ============================================================
-//  PINS
-// ============================================================
-#define RELAY_PIN   25
-#define BUTTON_PIN  32   // Interrupteur physique (INPUT_PULLUP → LOW = actif)
-#define SOIL_PIN    36   // GPIO36 (VP) — input only, ADC1   // Capteur sol capacitif (ADC)
-#define FLOW_PIN    33   // Débitmètre YF-TM02 (interrupt)
-#define TEMP_PIN    26   // DS18B20 température sol
-#define TRIG_PIN    13   // HC-SR04 TRIG
-#define ECHO_PIN    14   // HC-SR04 ECHO
-#define DHT_PIN     4    // DHT11 DATA — GPIO4 (GPIO19/21 = SPI/I2C réservés sur LILYGO)
+DHT dht(DHTPIN, DHTTYPE);
 
-// ============================================================
-//  CALIBRATION
-// ============================================================
-const int   SOIL_DRY   = 3930;  // ADC sol sec  → 0%
-const int   SOIL_WET   = 1800;  // ADC sol mouillé → 100%
-const float CAL_FACTOR = 7.5;   // Impulsions/s par L/min (YF-TM02)
-const int   TANK_DEPTH = 10;    // Distance cm quand cuve vide
-const int   TANK_FULL  = 5;     // Distance cm quand cuve pleine
+// --- VALEURS D'ETALONNAGE & SEUILS ---
+const int   SOIL_DRY  = 2670;
+const int   SOIL_WET  = 2540;
+const float CAL_FACTOR = 7.5;
+int         TANK_DEPTH = 10;
 
-// ============================================================
-//  VARIABLES GLOBALES
-// ============================================================
-volatile int  pulseCount = 0;
-float         totalLitres = 0.0;
-unsigned long lastMillis  = 0;
-bool          appStatus   = false;
+// --- VARIABLES ---
+volatile int pulseCount = 0;
+float        totalLitres = 0.0;
+float        flowRate    = 0.0;
 
-// ============================================================
-//  OBJETS CAPTEURS
-// ============================================================
-OneWire           oneWire(TEMP_PIN);
-DallasTemperature tempSensors(&oneWire);
-DHT               dht(DHT_PIN, DHT11);
+unsigned long lastDisplayMillis = 0;
+unsigned long lastAPIMillis     = 0;
 
-// ============================================================
-//  ISR — Débitmètre
-// ============================================================
+bool pumpStatus               = false;
+bool dernierEtatBoutonPhysique = false;
+
+int   humSol    = 0;
+int   rawSoil   = 0;
+bool  soilError = false;
+int   waterLevel = 0;
+float tempSol   = -127.0;
+float humAir    = 0.0;
+float tempAir   = 0.0;
+
+OneWire         oneWire(TEMP_PIN);
+DallasTemperature sensors(&oneWire);
+
 void IRAM_ATTR pulseCounter() {
-    pulseCount++;
+  pulseCount++;
 }
 
-// ============================================================
-//  LECTURE NIVEAU D'EAU (HC-SR04)
-//  Retourne 0–100 % (100 = plein)
-// ============================================================
-int getWaterLevel() {
-    digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(2);
-    digitalWrite(TRIG_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIG_PIN, LOW);
-
-    long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-    if (duration == 0) return 0; // Timeout → cuve vide ou capteur débranché
-
-    int distance = duration * 0.034 / 2;
-    int level    = map(distance, TANK_DEPTH, TANK_FULL, 0, 100);
-    return constrain(level, 0, 100);
+// ─────────────────────────────────────────────────────────────
+void connecterWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+  Serial.println("\n=========================================");
+  Serial.printf("Connexion au WiFi : %s\n", SSID);
+  Serial.println("=========================================");
+  WiFi.begin(SSID, PASSWORD);
+  int tentatives = 0;
+  while (WiFi.status() != WL_CONNECTED && tentatives < 30) {
+    delay(500);
+    Serial.print(".");
+    tentatives++;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n\n✅ WiFi Connecté avec succès !");
+    Serial.print("   -> Adresse IP accordée : ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n\n⚠️ Échec de connexion WiFi (Mode local actif).");
+  }
+  Serial.println("=========================================\n");
 }
 
-// ============================================================
-//  SETUP
-// ============================================================
+// ─────────────────────────────────────────────────────────────
+int getWaterLevelPercent() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duree = pulseIn(ECHO_PIN, HIGH, 10000);
+  if (duree == 0) return 0;
+  int distance    = duree * 0.034 / 2;
+  int levelPercent = map(distance, TANK_DEPTH, 3, 0, 100);
+  return constrain(levelPercent, 0, 100);
+}
+
+// ─────────────────────────────────────────────────────────────
+void setPump(bool on) {
+  digitalWrite(RELAY_PIN, on ? HIGH : LOW);
+  pumpStatus = on;
+}
+
+// ─────────────────────────────────────────────────────────────
 void setup() {
-    Serial.begin(115200);
+  Serial.begin(115200);
+  delay(500);
 
-    pinMode(RELAY_PIN,  OUTPUT);
-    digitalWrite(RELAY_PIN, LOW);
+  pinMode(RELAY_PIN, OUTPUT);
+  setPump(false);  // pompe éteinte au démarrage
 
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SWITCH_PIN, INPUT_PULLUP);
+  dernierEtatBoutonPhysique = !digitalRead(SWITCH_PIN);
 
-    pinMode(FLOW_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(FLOW_PIN), pulseCounter, FALLING);
+  pinMode(FLOW_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOW_PIN), pulseCounter, FALLING);
 
-    pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(SOIL_PIN, INPUT);
 
-    // Démarrage capteurs
-    tempSensors.begin();
-    tempSensors.setWaitForConversion(false);
-    dht.begin();
+  sensors.begin();
+  sensors.setWaitForConversion(false);
+  dht.begin();
 
-    // Connexion WiFi
-    WiFi.begin(SSID, PASS);
-    Serial.print("[WiFi] Connexion");
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println("\n✅ AGROSMART PRET - MODE DHT11 ACTIF");
-    Serial.println("IP: " + WiFi.localIP().toString());
+  connecterWiFi();
+  lastDisplayMillis = millis();
+  lastAPIMillis     = millis();
 }
 
-// ============================================================
-//  LOOP
-// ============================================================
+// ─────────────────────────────────────────────────────────────
 void loop() {
-    // Lecture interrupteur physique (sans délai)
-    bool physicalSwitch = (digitalRead(BUTTON_PIN) == LOW);
 
-    if (millis() - lastMillis >= SEND_INTERVAL_MS) {
-        lastMillis = millis();
+  // ── 1. COMMUTATEUR PHYSIQUE (priorité absolue) ──────────────
+  bool modeManuelPhysique = !digitalRead(SWITCH_PIN);
 
-        // --- Étape 1 : DHT11 (température et humidité air) ---
-        Serial.println("\n[1] Lecture DHT11 (Air)...");
-        float humAir  = dht.readHumidity();
-        float tempAir = dht.readTemperature();
+  if (modeManuelPhysique != dernierEtatBoutonPhysique) {
+    dernierEtatBoutonPhysique = modeManuelPhysique;
+    if (modeManuelPhysique) {
+      setPump(true);
+      Serial.println("🚨 [PHYSIQUE] Commutateur ON → Pompe activée");
+    } else {
+      setPump(false);
+      Serial.println("🛑 [PHYSIQUE] Commutateur OFF → Pompe coupée");
+    }
+  }
 
-        // --- Étape 2 : DS18B20 (température sol) ---
-        Serial.println("[2] Lecture DS18B20 (Sol)...");
-        tempSensors.requestTemperatures();
-        float tempSol = tempSensors.getTempCByIndex(0);
+  unsigned long currentMillis = millis();
 
-        // --- Étape 3 : Humidité sol capacitif ---
-        Serial.println("[3] Lecture Humidité Sol...");
-        int humSol = constrain(map(analogRead(SOIL_PIN), SOIL_DRY, SOIL_WET, 0, 100), 0, 100);
+  // ── 2. LECTURE CAPTEURS (toutes les 1s) ─────────────────────
+  if (currentMillis - lastDisplayMillis >= 1000) {
+    unsigned long intervalleCalcul = currentMillis - lastDisplayMillis;
+    lastDisplayMillis = currentMillis;
 
-        // --- Étape 4 : Niveau d'eau (ultrason) ---
-        Serial.println("[4] Lecture Ultrasons...");
-        int waterLevel = getWaterLevel();
+    noInterrupts();
+    int pulses = pulseCount;
+    pulseCount = 0;
+    interrupts();
 
-        // --- Débitmètre (lecture atomique) ---
-        noInterrupts();
-        int pulses = pulseCount;
-        pulseCount = 0;
-        interrupts();
+    flowRate    = (pulses / CAL_FACTOR) * (60000.0f / (float)intervalleCalcul);
+    totalLitres += ((float)pulses / CAL_FACTOR) / 60.0f;
 
-        float flowRate   = (float)pulses / CAL_FACTOR;                          // L/min
-        float cycleVol   = (flowRate / 60.0) * (SEND_INTERVAL_MS / 1000.0);    // L ce cycle
-        totalLitres     += cycleVol;
-
-        // --- Étape 5 : Envoi API ---
-        if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("[5] Envoi au serveur Laravel...");
-
-            HTTPClient http;
-            http.begin(API_URL);
-            http.addHeader("Content-Type",  "application/json");
-            http.addHeader("Accept",        "application/json");
-            http.addHeader("Authorization", String("Bearer ") + TOKEN);
-            http.setTimeout(8000);
-
-            // Construction JSON
-            StaticJsonDocument<400> doc;
-            doc["soil_humidity"] = humSol;
-            doc["flow_rate"]     = round(flowRate * 100) / 100.0;
-            doc["total_volume"]  = round(totalLitres * 1000) / 1000.0;
-            doc["water_level"]   = waterLevel;
-
-            // DS18B20 : n'envoyer que si sonde connectée (-127°C = débranchée)
-            if (tempSol > -100.0) {
-                doc["soil_temperature"] = round(tempSol * 10) / 10.0;
-            }
-
-            // DHT11 : n'envoyer que si lecture valide
-            if (!isnan(tempAir)) {
-                doc["air_temperature"] = round(tempAir * 10) / 10.0;
-            }
-            if (!isnan(humAir)) {
-                doc["air_humidity"] = round(humAir * 10) / 10.0;
-            }
-
-            String jsonPayload;
-            serializeJson(doc, jsonPayload);
-            Serial.println("[API] → " + jsonPayload);
-
-            int httpCode = http.POST(jsonPayload);
-            Serial.printf("[6] Réponse HTTP = %d\n", httpCode);
-
-            if (httpCode == 200 || httpCode == 201) {
-                String response = http.getString();
-                StaticJsonDocument<300> respDoc;
-                if (deserializeJson(respDoc, response) == DeserializationError::Ok) {
-                    appStatus = respDoc["irrigation"] | false;
-                }
-
-                // Affichage récapitulatif
-                Serial.println("--- SYNCHRO REUSSIE ---");
-                if (isnan(tempAir)) {
-                    Serial.println("⚠️  DHT11 : lecture invalide");
-                } else {
-                    Serial.printf("🌤️  Air:  %.1f°C | 💧 Hum Air: %.1f%%\n", tempAir, humAir);
-                }
-                if (tempSol <= -100.0) {
-                    Serial.println("⚠️  DS18B20 : capteur débranché");
-                } else {
-                    Serial.printf("🌡️  Sol:  %.1f°C | 🌱 Hum Sol: %d%%\n", tempSol, humSol);
-                }
-                Serial.printf("🛢️  Cuve: %d%%\n", waterLevel);
-                Serial.printf("💧 Débit: %.2f L/min | 📊 Vol Total: %.3f L\n", flowRate, totalLitres);
-                Serial.printf("🚀 Pompe App: %s | 🔘 Interrupteur: %s\n",
-                              appStatus ? "ON" : "OFF",
-                              physicalSwitch ? "ON" : "OFF");
-
-            } else {
-                Serial.printf("❌ Erreur HTTP : %s\n", http.errorToString(httpCode).c_str());
-            }
-
-            http.end();
-
-        } else {
-            Serial.println("❌ WiFi Déconnecté — tentative reconnexion...");
-            WiFi.reconnect();
-        }
+    rawSoil = analogRead(SOIL_PIN);
+    if (rawSoil < 300) {
+      soilError = true;
+    } else {
+      soilError = false;
+      humSol = constrain(map(rawSoil, SOIL_DRY, SOIL_WET, 0, 100), 0, 100);
     }
 
-    // Commande relais (App OU interrupteur physique)
-    digitalWrite(RELAY_PIN, (appStatus || physicalSwitch) ? HIGH : LOW);
+    waterLevel = getWaterLevelPercent();
+    tempSol    = sensors.getTempCByIndex(0);
+    sensors.requestTemperatures();
+    humAir  = dht.readHumidity();
+    tempAir = dht.readTemperature();
 
-    delay(50);
+    // Moniteur série
+    Serial.print("🌱 Hum Sol: ");
+    if (!soilError) { Serial.print(humSol); Serial.print("%"); } else { Serial.print("ERREUR"); }
+    Serial.print(" | 🌡️ Temp Sol: ");
+    if (tempSol != -127.00) { Serial.print(tempSol, 1); Serial.print("°C"); } else { Serial.print("ERREUR"); }
+    Serial.print(" | 💨 Air: ");
+    if (!isnan(tempAir)) { Serial.print(tempAir, 1); Serial.print("°C "); } else { Serial.print("?°C "); }
+    if (!isnan(humAir))  { Serial.print(humAir, 0);  Serial.print("%"); }  else { Serial.print("?%"); }
+    Serial.print(" | 🛢️ Cuve: ");    Serial.print(waterLevel);  Serial.print("%");
+    Serial.print(" | 💧 Débit: ");    Serial.print(flowRate, 1);  Serial.print(" L/min");
+    Serial.print(" | Total: ");       Serial.print(totalLitres, 3); Serial.print(" L");
+    Serial.print(" | SWITCH: ");      Serial.print(modeManuelPhysique ? "ON" : "OFF");
+    Serial.print(" | 🚀 POMPE: ");    Serial.println(pumpStatus ? "ON" : "OFF");
+  }
+
+  // ── 3. SYNCHRONISATION API (toutes les 5s) ──────────────────
+  if (currentMillis - lastAPIMillis >= 5000) {
+    lastAPIMillis = currentMillis;
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("⚠️ WiFi déconnecté — tentative de reconnexion...");
+      connecterWiFi();
+      return;
+    }
+
+    HTTPClient http;
+    http.begin(API_URL);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Authorization", String("Bearer ") + TOKEN);
+    http.setTimeout(3000);  // 3s de timeout (était 1.5s — trop court !)
+
+    StaticJsonDocument<400> jsonDoc;
+    if (!soilError) jsonDoc["soil_humidity"] = humSol;
+    jsonDoc["water_level"]  = waterLevel;
+    jsonDoc["pump_status"]  = pumpStatus ? 1 : 0;
+    jsonDoc["flow_rate"]    = round(flowRate    * 10.0f) / 10.0f;
+    jsonDoc["total_volume"] = round(totalLitres * 100.0f) / 100.0f;
+    jsonDoc["manual_mode"]  = modeManuelPhysique ? 1 : 0;
+    if (tempSol != -127.00)  jsonDoc["soil_temperature"] = tempSol;
+    if (!isnan(tempAir))     jsonDoc["air_temperature"]  = tempAir;
+    if (!isnan(humAir))      jsonDoc["air_humidity"]     = humAir;
+
+    String corpsJSON;
+    serializeJson(jsonDoc, corpsJSON);
+
+    int codeHTTP = http.POST(corpsJSON);
+    Serial.printf("📡 API → HTTP %d\n", codeHTTP);
+
+    if (codeHTTP == 200 || codeHTTP == 201) {
+      String reponse = http.getString();
+      StaticJsonDocument<300> reponseDoc;
+
+      if (!deserializeJson(reponseDoc, reponse)) {
+
+        // ── Commande web : acceptée UNIQUEMENT si switch physique est sur OFF
+        if (!modeManuelPhysique && reponseDoc.containsKey("pump_command")) {
+          int commandePompe = reponseDoc["pump_command"];
+
+          // -1 = backend signale que le switch physique est actif → on ignore
+          if (commandePompe == -1) {
+            Serial.println("🌐 [API] Switch physique actif côté backend — commande web ignorée");
+          } else {
+            Serial.printf("🌐 [API] pump_command reçu = %d (pompe actuelle = %s)\n",
+                          commandePompe, pumpStatus ? "ON" : "OFF");
+
+            if (commandePompe == 1) {
+              if (!pumpStatus) {
+                setPump(true);
+                Serial.println("🌐 [API WEB] Ordre ALLUMER → Pompe activée ✅");
+              } else {
+                Serial.println("🌐 [API WEB] Pompe déjà ON — rien à faire");
+              }
+            } else {  // commandePompe == 0
+              if (pumpStatus) {
+                setPump(false);
+                Serial.println("🌐 [API WEB] Ordre ÉTEINDRE → Pompe coupée ✅");
+              } else {
+                Serial.println("🌐 [API WEB] Pompe déjà OFF — rien à faire");
+              }
+            }
+          }
+        }
+
+      } else {
+        Serial.println("⚠️ Erreur parsing JSON réponse API");
+      }
+    } else {
+      Serial.printf("❌ Erreur HTTP : %d\n", codeHTTP);
+    }
+
+    http.end();
+  }
 }
