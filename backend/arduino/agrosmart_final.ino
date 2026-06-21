@@ -1,9 +1,18 @@
 // ============================================================
 //  AgroSmart — ESP32 Code Final
-//  Logique de priorité :
-//    1. Switch physique (Pin 32) → priorité absolue
-//    2. Boutons Dashboard (Irriguer / Arrêter) → commande Web
-//    3. Mode automatique → seuils culture définis dans Laravel
+//
+//  DEUX MODES DE CONTRÔLE DE LA POMPE :
+//
+//  MODE 1 — PHYSIQUE (Switch PIN 32, priorité absolue)
+//    → Switch ON  : relais activé immédiatement, WiFi ignoré
+//    → Switch OFF : relais coupé, passe en mode App/Auto
+//
+//  MODE 2 — APPLICATION / AUTO (via Dashboard Laravel)
+//    → Bouton "Irriguer" sur le Dashboard → pump_command=1
+//    → Bouton "Arrêter" sur le Dashboard  → pump_command=0
+//    → Mode auto (seuils culture)         → pump_command=0/1
+//    → L'ESP32 lit la réponse JSON de l'API toutes les 5s
+//    → et applique la commande sur le relais
 // ============================================================
 
 #include <OneWire.h>
@@ -13,70 +22,72 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-// --- CONFIGURATION WI-FI & API ---
+// ─── CONFIGURATION ───────────────────────────────────────────
 const char* SSID     = "Etudiants_ISM";
 const char* PASSWORD = "Etudiant123&";
+
+// URL de l'API — remplacer l'IP et l'ID du device si nécessaire
 const char* API_URL  = "http://192.30.0.54:8000/api/devices/3/sensors";
+
+// Token Sanctum de l'utilisateur connecté (générer depuis l'app si expiré)
 const char* TOKEN    = "19|u8UlaD1fse3H0ZpnNaPNy6A0oD61OLCowOzFdfD5f16182a0";
 
-// --- PINS ---
-#define SOIL_PIN   35   // Capteur humidité sol (analogique)
-#define FLOW_PIN   18   // Débitmètre (interruption)
+// ─── PINS ────────────────────────────────────────────────────
+#define SOIL_PIN   35   // Capteur humidité sol (ADC)
+#define FLOW_PIN   18   // Débitmètre YF-S201 (interruption)
 #define TEMP_PIN   26   // DS18B20 température sol
 #define DHTPIN     21   // DHT11 température + humidité air
-#define RELAY_PIN  23   // Relais → pompe
-#define SWITCH_PIN 32   // Interrupteur physique (priorité absolue)
-#define TRIG_PIN   14   // Ultrasons TRIG
-#define ECHO_PIN   25   // Ultrasons ECHO
+#define RELAY_PIN  23   // Relais → pompe à eau
+#define SWITCH_PIN 32   // Interrupteur physique (INPUT_PULLUP)
+#define TRIG_PIN   14   // HC-SR04 TRIG
+#define ECHO_PIN   25   // HC-SR04 ECHO
 
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
-// --- ÉTALONNAGE ---
-const int   SOIL_DRY   = 2670;  // valeur analogique sol sec
-const int   SOIL_WET   = 2540;  // valeur analogique sol humide
-const float CAL_FACTOR = 7.5;   // facteur calibration débitmètre
-const int   TANK_DEPTH = 10;    // profondeur cuve en cm (distance max capteur→eau)
+// ─── ÉTALONNAGE ──────────────────────────────────────────────
+const int   SOIL_DRY   = 2670;  // ADC sol totalement sec
+const int   SOIL_WET   = 2540;  // ADC sol saturé d'eau
+const float CAL_FACTOR = 7.5;   // pulses/litre débitmètre
+const int   TANK_DEPTH = 10;    // profondeur cuve (cm, distance max→eau)
 
-// --- VARIABLES GLOBALES ---
-volatile int  pulseCount = 0;
+// ─── VARIABLES ───────────────────────────────────────────────
+volatile int  pulseCount  = 0;
 float         totalLitres = 0.0;
 float         flowRate    = 0.0;
 
-unsigned long lastSensorMillis = 0;  // cadence lecture capteurs (1s)
-unsigned long lastAPIMillis    = 0;  // cadence envoi API (5s)
+unsigned long lastSensorMillis = 0;  // lecture capteurs : 1s
+unsigned long lastAPIMillis    = 0;  // sync API : 5s
 
-// État pompe — source unique de vérité
-bool pumpStatus = false;
+bool pumpStatus      = false;  // état actuel du relais
+bool switchPrecedent = false;  // dernier état lu du switch
 
-// Mémorisation état précédent du switch pour détecter les changements
-bool switchPrecedent = false;
-
-// Données capteurs
-int   humSol    = 0;
-int   rawSoil   = 0;
-bool  soilError = false;
+// Données capteurs (mise à jour chaque seconde)
+int   humSol     = 0;
+int   rawSoil    = 0;
+bool  soilError  = false;
 int   waterLevel = 0;
-float tempSol   = -127.0;
-float humAir    = 0.0;
-float tempAir   = 0.0;
+float tempSol    = -127.0;
+float humAir     = 0.0;
+float tempAir    = 0.0;
 
 OneWire           oneWire(TEMP_PIN);
 DallasTemperature sensors(&oneWire);
 
-// ── Interruption débitmètre ──────────────────────────────────
+// ─── INTERRUPTION DÉBITMÈTRE ─────────────────────────────────
 void IRAM_ATTR pulseCounter() {
   pulseCount++;
 }
 
-// ── Contrôle pompe centralisé ────────────────────────────────
+// ─── CONTRÔLE POMPE (fonction centralisée) ───────────────────
+// Toujours passer par cette fonction pour changer l'état du relais
 void setPump(bool on) {
   digitalWrite(RELAY_PIN, on ? HIGH : LOW);
   pumpStatus = on;
-  Serial.printf("🔌 Pompe → %s\n", on ? "ON" : "OFF");
+  Serial.printf("🔌 RELAIS → %s\n", on ? "ON (pompe démarrée)" : "OFF (pompe arrêtée)");
 }
 
-// ── Connexion WiFi ───────────────────────────────────────────
+// ─── CONNEXION WIFI ──────────────────────────────────────────
 void connecterWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -90,13 +101,13 @@ void connecterWiFi() {
     t++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\n✅ WiFi connecté — IP : %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("\n✅ WiFi OK — IP : %s\n", WiFi.localIP().toString().c_str());
   } else {
-    Serial.println("\n⚠️ WiFi non disponible — mode local actif.");
+    Serial.println("\n⚠️ WiFi indisponible — mode physique uniquement.");
   }
 }
 
-// ── Niveau eau via ultrasons ─────────────────────────────────
+// ─── NIVEAU EAU (ultrasons HC-SR04) ──────────────────────────
 int getWaterLevelPercent() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -109,18 +120,20 @@ int getWaterLevelPercent() {
   return constrain(map(distance, TANK_DEPTH, 3, 0, 100), 0, 100);
 }
 
-// ────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
   delay(500);
+  Serial.println("\n=== AgroSmart ESP32 démarré ===");
 
-  // Relais
+  // Relais — éteint au démarrage
   pinMode(RELAY_PIN, OUTPUT);
   setPump(false);
 
-  // Switch physique — lecture initiale
+  // Switch physique
   pinMode(SWITCH_PIN, INPUT_PULLUP);
   switchPrecedent = !digitalRead(SWITCH_PIN);
+  Serial.printf("Switch initial : %s\n", switchPrecedent ? "ON" : "OFF");
 
   // Débitmètre
   pinMode(FLOW_PIN, INPUT_PULLUP);
@@ -131,7 +144,7 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
   pinMode(SOIL_PIN, INPUT);
 
-  // Capteurs température
+  // Capteurs
   sensors.begin();
   sensors.setWaitForConversion(false);
   dht.begin();
@@ -142,32 +155,39 @@ void setup() {
   lastAPIMillis    = millis();
 }
 
-// ────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 void loop() {
 
-  // ══════════════════════════════════════════════════════════
-  //  PRIORITÉ 1 — SWITCH PHYSIQUE (PIN 32)
-  //  Priorité absolue, indépendant du WiFi
-  //  Agit dès le changement de position de l'interrupteur
-  // ══════════════════════════════════════════════════════════
-  bool switchActif = !digitalRead(SWITCH_PIN);
+  // ════════════════════════════════════════════════════════════
+  //  MODE 1 — SWITCH PHYSIQUE (PIN 32)
+  //  Vérification à chaque itération du loop (< 1ms)
+  //  Réaction immédiate au changement de position
+  // ════════════════════════════════════════════════════════════
+  bool switchActif = !digitalRead(SWITCH_PIN);  // LOW quand ON (INPUT_PULLUP)
 
   if (switchActif != switchPrecedent) {
     switchPrecedent = switchActif;
+
     if (switchActif) {
+      // ── Switch basculé sur ON ──
+      // Action immédiate, sans attendre l'API ni le WiFi
       setPump(true);
-      Serial.println("🚨 [MODE PHYSIQUE] Switch ON → Pompe ALLUMÉE (priorité absolue)");
+      Serial.println("🚨 [MODE PHYSIQUE] Switch ON → Pompe ALLUMÉE");
+      Serial.println("   ℹ️ Les boutons App sont ignorés tant que le switch est ON");
     } else {
+      // ── Switch basculé sur OFF ──
+      // On coupe la pompe et on repasse sous contrôle App/Auto
       setPump(false);
-      Serial.println("🛑 [MODE PHYSIQUE] Switch OFF → Pompe ÉTEINTE — contrôle web/auto actif");
+      Serial.println("🛑 [MODE PHYSIQUE] Switch OFF → Pompe ÉTEINTE");
+      Serial.println("   ℹ️ Contrôle repassé aux boutons Dashboard et mode Auto");
     }
   }
 
   unsigned long now = millis();
 
-  // ══════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   //  LECTURE CAPTEURS — toutes les 1 seconde
-  // ══════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   if (now - lastSensorMillis >= 1000) {
     unsigned long dt = now - lastSensorMillis;
     lastSensorMillis = now;
@@ -175,7 +195,7 @@ void loop() {
     // Débitmètre
     noInterrupts();
     int pulses = pulseCount;
-    pulseCount = 0;
+    pulseCount  = 0;
     interrupts();
     flowRate    = (pulses / CAL_FACTOR) * (60000.0f / (float)dt);
     totalLitres += ((float)pulses / CAL_FACTOR) / 60.0f;
@@ -189,71 +209,75 @@ void loop() {
       humSol = constrain(map(rawSoil, SOIL_DRY, SOIL_WET, 0, 100), 0, 100);
     }
 
-    // Niveau eau
+    // Niveau eau, températures
     waterLevel = getWaterLevelPercent();
-
-    // Température sol
-    tempSol = sensors.getTempCByIndex(0);
+    tempSol    = sensors.getTempCByIndex(0);
     sensors.requestTemperatures();
-
-    // Air (DHT11)
     humAir  = dht.readHumidity();
     tempAir = dht.readTemperature();
 
-    // Moniteur série
+    // ── Moniteur série ──
     Serial.print("🌱 Sol: ");
     soilError ? Serial.print("ERR") : (Serial.print(humSol), Serial.print("%"));
-    Serial.print(" | 🌡️ TempSol: ");
+    Serial.print(" | 🌡️ Tsol: ");
     (tempSol != -127.0) ? (Serial.print(tempSol,1), Serial.print("°C")) : Serial.print("ERR");
     Serial.print(" | 💨 Air: ");
     isnan(tempAir) ? Serial.print("?") : (Serial.print(tempAir,1), Serial.print("°C "));
     isnan(humAir)  ? Serial.print("?%") : (Serial.print(humAir,0), Serial.print("%"));
-    Serial.print(" | 🛢️ Cuve: ");  Serial.print(waterLevel);   Serial.print("%");
-    Serial.print(" | 💧 Débit: "); Serial.print(flowRate,1);   Serial.print("L/m");
-    Serial.print(" | Total: ");    Serial.print(totalLitres,2); Serial.print("L");
-    Serial.print(" | SWITCH: ");   Serial.print(switchActif ? "ON" : "OFF");
-    Serial.print(" | POMPE: ");    Serial.println(pumpStatus ? "ON" : "OFF");
+    Serial.print(" | 🛢️ Cuve: ");   Serial.print(waterLevel);    Serial.print("%");
+    Serial.print(" | 💧 Débit: ");  Serial.print(flowRate, 1);   Serial.print("L/m");
+    Serial.print(" | Total: ");     Serial.print(totalLitres, 2); Serial.print("L");
+    Serial.print(" | SW: ");        Serial.print(switchActif ? "ON" : "OFF");
+    Serial.print(" | POMPE: ");     Serial.println(pumpStatus ? "ON ✅" : "OFF ⛔");
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  SYNCHRONISATION API — toutes les 5 secondes
-  //  Envoie les données + reçoit pump_command de Laravel
-  //  Appliqué UNIQUEMENT si switch physique est sur OFF
-  // ══════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
+  //  MODE 2 — APPLICATION / AUTO (toutes les 5 secondes)
+  //
+  //  L'ESP32 envoie ses données capteurs à Laravel.
+  //  Laravel répond avec pump_command = 0 ou 1 selon :
+  //    • Bouton "Irriguer" cliqué → pump_command = 1
+  //    • Bouton "Arrêter"  cliqué → pump_command = 0
+  //    • Mode auto (humSol < seuil culture) → pump_command = 1
+  //    • Cuve vide (sécurité)      → pump_command = 0
+  //
+  //  ⚠️ Appliqué UNIQUEMENT si switch physique est sur OFF
+  // ════════════════════════════════════════════════════════════
   if (now - lastAPIMillis >= 5000) {
     lastAPIMillis = now;
 
-    // Reconnexion automatique si WiFi perdu
     if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("⚠️ WiFi perdu — reconnexion...");
+      Serial.println("⚠️ WiFi perdu — tentative reconnexion...");
       connecterWiFi();
       return;
     }
 
-    // --- Construction du payload JSON ---
+    // ── Construction du payload envoyé à Laravel ──
     StaticJsonDocument<512> jsonDoc;
-    if (!soilError)         jsonDoc["soil_humidity"]    = humSol;
-    if (tempSol != -127.0)  jsonDoc["soil_temperature"] = tempSol;
-    if (!isnan(tempAir))    jsonDoc["air_temperature"]  = tempAir;
-    if (!isnan(humAir))     jsonDoc["air_humidity"]     = humAir;
+    if (!soilError)        jsonDoc["soil_humidity"]    = humSol;
+    if (tempSol != -127.0) jsonDoc["soil_temperature"] = tempSol;
+    if (!isnan(tempAir))   jsonDoc["air_temperature"]  = tempAir;
+    if (!isnan(humAir))    jsonDoc["air_humidity"]      = humAir;
     jsonDoc["water_level"]  = waterLevel;
     jsonDoc["pump_status"]  = pumpStatus ? 1 : 0;
     jsonDoc["flow_rate"]    = round(flowRate    * 10.0f) / 10.0f;
     jsonDoc["total_volume"] = round(totalLitres * 100.0f) / 100.0f;
-    jsonDoc["manual_mode"]  = switchActif ? 1 : 0;  // Laravel saura que le switch est actif
+    // Indique à Laravel si le switch physique est actif
+    // → Laravel n'enverra pas de commande contradictoire
+    jsonDoc["manual_mode"]  = switchActif ? 1 : 0;
 
     String payload;
     serializeJson(jsonDoc, payload);
 
-    // --- Envoi HTTP POST ---
+    // ── Envoi HTTP POST ──
     HTTPClient http;
     http.begin(API_URL);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Authorization", String("Bearer ") + TOKEN);
-    http.setTimeout(4000);  // 4s — suffisant même sur réseau WiFi partagé
+    http.setTimeout(4000);
 
     int httpCode = http.POST(payload);
-    Serial.printf("📡 API HTTP %d\n", httpCode);
+    Serial.printf("📡 API HTTP %d", httpCode);
 
     if (httpCode == 200 || httpCode == 201) {
       String reponse = http.getString();
@@ -261,39 +285,44 @@ void loop() {
 
       if (deserializeJson(reponseDoc, reponse) == DeserializationError::Ok) {
 
-        // ══════════════════════════════════════════════════
-        //  PRIORITÉ 2 & 3 — COMMANDE WEB / AUTO (Laravel)
-        //  Appliquée SEULEMENT si switch physique est OFF
-        //  Laravel décide en fonction de :
-        //    - Bouton "Irriguer" → pump_command = 1
-        //    - Bouton "Arrêter" → pump_command = 0
-        //    - Mode auto (seuils culture) → pump_command = 0 ou 1
-        //    - Cuve vide (sécurité) → pump_command = 0
-        // ══════════════════════════════════════════════════
-        if (!switchActif && reponseDoc.containsKey("pump_command")) {
+        // ── Lecture de la commande pump_command ──
+        if (reponseDoc.containsKey("pump_command")) {
           int cmd = reponseDoc["pump_command"];
-          Serial.printf("🌐 [API] pump_command = %d | pompe actuelle = %s\n",
-                        cmd, pumpStatus ? "ON" : "OFF");
 
-          if (cmd == 1 && !pumpStatus) {
-            setPump(true);
-            Serial.println("✅ [WEB/AUTO] Ordre ALLUMER → Pompe activée");
-          } else if (cmd == 0 && pumpStatus) {
-            setPump(false);
-            Serial.println("✅ [WEB/AUTO] Ordre ÉTEINDRE → Pompe coupée");
+          if (switchActif) {
+            // Switch physique ON → on ignore complètement la commande app
+            Serial.printf(" | ⚙️ Switch ON — pump_command=%d ignoré\n", cmd);
+
           } else {
-            Serial.println("ℹ️ [WEB/AUTO] Pompe déjà dans l'état demandé");
+            // Switch OFF → on applique la commande de l'application / mode auto
+            Serial.printf(" | 🌐 pump_command=%d reçu (pompe=%s)\n",
+                          cmd, pumpStatus ? "ON" : "OFF");
+
+            if (cmd == 1 && !pumpStatus) {
+              // ── DÉMARRAGE via bouton "Irriguer" ou mode auto ──
+              setPump(true);
+              Serial.println("   ✅ [APP/AUTO] Ordre IRRIGUER → Pompe démarrée");
+
+            } else if (cmd == 0 && pumpStatus) {
+              // ── ARRÊT via bouton "Arrêter" ──
+              setPump(false);
+              Serial.println("   ✅ [APP/AUTO] Ordre ARRÊTER → Pompe coupée");
+
+            } else {
+              // Pompe déjà dans l'état demandé
+              Serial.println(" | ℹ️ Pompe déjà dans l'état demandé");
+            }
           }
-        } else if (switchActif) {
-          Serial.println("⚙️ [PHYSIQUE] Switch actif — commande web ignorée");
+        } else {
+          Serial.println(" | ⚠️ pump_command absent de la réponse");
         }
 
       } else {
-        Serial.println("⚠️ Erreur parsing JSON réponse");
+        Serial.println(" | ⚠️ Erreur parsing JSON réponse");
       }
 
     } else {
-      Serial.printf("❌ Erreur HTTP %d — vérifier le serveur Laravel\n", httpCode);
+      Serial.printf("\n❌ Erreur HTTP %d — vérifier que le serveur Laravel est démarré\n", httpCode);
     }
 
     http.end();
