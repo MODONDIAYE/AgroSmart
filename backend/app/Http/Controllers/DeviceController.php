@@ -307,15 +307,35 @@ class DeviceController extends Controller
             }
         }
 
-        // --- Décision de la commande pompe envoyée à l'ESP32 ---
+        // ══════════════════════════════════════════════════════
+        //  DÉCISION pump_command → réponse à l'ESP32
+        //
+        //  Logique de priorité :
+        //  1. Switch physique actif (manual_mode=1)
+        //     → L'ESP32 gère lui-même, on lui confirme juste pump=1
+        //  2. Bouton Dashboard (dernier événement BDD)
+        //     → "Irriguer" = action 1, "Arrêter" = action 0
+        //  3. Mode automatique (seuils culture)
+        //     → Sol trop sec ET cuve sécurisée → on arrose
+        //  4. Sécurité : cuve vide → on coupe toujours
+        // ══════════════════════════════════════════════════════
 
-        // 1. Dernier ordre Web enregistré en BDD (boutons Irriguer / Arrêter du dashboard)
+        // Priorité 1 : switch physique actif → ESP32 se gère seul
+        if (isset($data['manual_mode']) && $data['manual_mode'] == 1) {
+            return response()->json([
+                'success'      => true,
+                'message'      => 'Mode physique actif — ESP32 gère la pompe',
+                'pump_command' => 1,  // confirme l'état ON du switch
+            ]);
+        }
+
+        // Priorité 2 : dernier ordre du Dashboard (boutons Irriguer / Arrêter)
         $lastEvent = IrrigationEvent::where('device_id', $device->id)
             ->orderBy('timestamp', 'desc')
             ->first();
         $webCommandActive = ($lastEvent && $lastEvent->action == 1);
 
-        // 2. Condition automatique basée sur les capteurs et les seuils de la culture
+        // Priorité 3 : mode automatique par seuils de la culture
         $autoConditionActive = false;
         if ($crop && isset($data['soil_humidity']) && isset($data['water_level'])) {
             if (
@@ -326,18 +346,12 @@ class DeviceController extends Controller
             }
         }
 
-        // 3. Décision finale : ON si commande Web OU condition auto
+        // Décision finale
         $pumpCommand = ($webCommandActive || $autoConditionActive) ? 1 : 0;
 
-        // 4. Sécurité absolue : cuve vide → pompe coupée quoi qu'il arrive
+        // Sécurité absolue : cuve vide → pompe coupée quoi qu'il arrive
         if (isset($data['water_level']) && $data['water_level'] <= 2) {
             $pumpCommand = 0;
-        }
-
-        // 5. Si l'ESP32 signale que le switch physique est sur ON,
-        //    on ne lui envoie pas d'ordre contradictoire (il gère lui-même)
-        if (isset($data['manual_mode']) && $data['manual_mode'] == 1) {
-            $pumpCommand = -1; // valeur sentinelle → ignorée côté Arduino
         }
 
         return response()->json([
