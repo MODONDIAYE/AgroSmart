@@ -416,9 +416,9 @@ export default function Dashboard() {
 
             <button
               onClick={handleManualIrrigate}
-              disabled={pumping || isPumpOn}
-              className={`btn-primary py-2 transition-all ${isPumpOn ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={isPumpOn ? 'La pompe est déjà active' : 'Démarrer l\'irrigation'}
+              disabled={pumping}
+              className="btn-primary py-2 transition-all"
+              title="Démarrer l'irrigation"
             >
               <Play size={15} />
               {pumping ? 'Envoi…' : 'Irriguer'}
@@ -426,9 +426,9 @@ export default function Dashboard() {
 
             <button
               onClick={handleStop}
-              disabled={stopping || !isPumpOn}
-              className={`btn-danger py-2 transition-all ${!isPumpOn ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={!isPumpOn ? 'La pompe est déjà arrêtée' : 'Arrêter l\'irrigation'}
+              disabled={stopping}
+              className="btn-danger py-2 transition-all"
+              title="Arrêter l'irrigation"
             >
               <StopCircle size={15} />
               {stopping ? 'Envoi…' : 'Arrêter'}
