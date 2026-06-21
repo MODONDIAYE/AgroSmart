@@ -49,6 +49,109 @@ function StatCard({ icon: Icon, label, value, unit, color, lastUpdate, tick }) {
   );
 }
 
+// ── Composant tableau paginé ────────────────────────────────
+function ReadingsTable({ readings, page, setPage, perPage }) {
+  const totalPages = Math.ceil(readings.length / perPage);
+  const paginated  = readings.slice((page - 1) * perPage, page * perPage);
+
+  const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1)
+    .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+    .reduce((acc, p, idx, arr) => {
+      if (idx > 0 && p - arr[idx - 1] > 1) acc.push('...');
+      acc.push(p);
+      return acc;
+    }, []);
+
+  return (
+    <div className="card animate-slide-up">
+      {/* En-tête */}
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="font-display font-bold text-stone-900 text-lg">Lectures capteurs</h2>
+          <p className="text-sm text-stone-500 font-body mt-0.5">
+            Données réelles remontées depuis l'ESP32 — {readings.length} entrées
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-green-600 font-body">
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" />
+          Live
+        </div>
+      </div>
+
+      {/* Tableau */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-sm font-body">
+          <thead>
+            <tr className="text-stone-500 border-b border-stone-200">
+              <th className="px-3 py-3">Horodatage</th>
+              <th className="px-3 py-3">Capteur</th>
+              <th className="px-3 py-3">Valeur</th>
+              <th className="px-3 py-3">Unité</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginated.map((row) => (
+              <tr key={row.id} className="border-b border-stone-100 hover:bg-stone-50 transition-colors">
+                <td className="px-3 py-2.5 text-stone-500 font-mono text-xs">
+                  {format(new Date(row.created_at), 'd MMM HH:mm:ss', { locale: fr })}
+                </td>
+                <td className="px-3 py-2.5">
+                  <span className="px-2 py-0.5 bg-primary-50 text-primary-700 rounded-lg text-xs font-body">
+                    {row.sensor_name}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 font-mono font-bold text-stone-800">{row.value}</td>
+                <td className="px-3 py-2.5 text-stone-400 text-xs">{row.unit}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-stone-100">
+          <p className="text-xs text-stone-400 font-body">
+            Page {page} / {totalPages} — {readings.length} entrées
+          </p>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPage(1)} disabled={page === 1}
+              className="px-2 py-1 text-xs rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+              «
+            </button>
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+              className="px-2 py-1 text-xs rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+              ‹
+            </button>
+            {pageNumbers.map((p, idx) =>
+              p === '...' ? (
+                <span key={`e-${idx}`} className="px-2 py-1 text-xs text-stone-400">…</span>
+              ) : (
+                <button key={p} onClick={() => setPage(p)}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                    page === p
+                      ? 'bg-primary-600 text-white border-primary-600 font-medium'
+                      : 'border-stone-200 text-stone-600 hover:bg-stone-50'
+                  }`}>
+                  {p}
+                </button>
+              )
+            )}
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+              className="px-2 py-1 text-xs rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+              ›
+            </button>
+            <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
+              className="px-2 py-1 text-xs rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+              »
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [devices, setDevices]       = useState([]);
@@ -64,6 +167,8 @@ export default function Dashboard() {
   const [lastSync, setLastSync]     = useState(null);
   const [liveCount, setLiveCount]   = useState(0); // nb de mises à jour auto
   const [tick, setTick]             = useState(0); // force re-render pour les timestamps
+  const [readingsPage, setReadingsPage] = useState(1);
+  const READINGS_PER_PAGE = 10;
   const timerRef = useRef(null);
   const tickRef  = useRef(null);
 
@@ -94,7 +199,10 @@ export default function Dashboard() {
 
       if (latestRes.data.success)  setSensors(latestRes.data.data);
       if (historyRes.data.success) setHistory(historyRes.data.data);
-      if (readingsRes.data.success) setReadings(readingsRes.data.data);
+      if (readingsRes.data.success) {
+        setReadings(readingsRes.data.data);
+        setReadingsPage(1); // retour à la page 1 à chaque refresh
+      }
       if (eventsRes.data.success)  setEvents(eventsRes.data.data.slice(0, 10));
 
       setLastSync(new Date());
@@ -389,48 +497,12 @@ export default function Dashboard() {
 
       {/* ── Tableau lectures brutes ── */}
       {readings.length > 0 && (
-        <div className="card animate-slide-up">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-display font-bold text-stone-900 text-lg">Lectures capteurs</h2>
-              <p className="text-sm text-stone-500 font-body mt-0.5">
-                Données réelles remontées depuis l'ESP32 — {readings.length} entrées
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-green-600 font-body">
-              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" />
-              Live
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm font-body">
-              <thead>
-                <tr className="text-stone-500 border-b border-stone-200">
-                  <th className="px-3 py-3">Horodatage</th>
-                  <th className="px-3 py-3">Capteur</th>
-                  <th className="px-3 py-3">Valeur</th>
-                  <th className="px-3 py-3">Unité</th>
-                </tr>
-              </thead>
-              <tbody>
-                {readings.map((row) => (
-                  <tr key={row.id} className="border-b border-stone-100 hover:bg-stone-50 transition-colors">
-                    <td className="px-3 py-2.5 text-stone-500 font-mono text-xs">
-                      {format(new Date(row.created_at), 'd MMM HH:mm:ss', { locale: fr })}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <span className="px-2 py-0.5 bg-primary-50 text-primary-700 rounded-lg text-xs font-body">
-                        {row.sensor_name}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5 font-mono font-bold text-stone-800">{row.value}</td>
-                    <td className="px-3 py-2.5 text-stone-400 text-xs">{row.unit}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <ReadingsTable
+          readings={readings}
+          page={readingsPage}
+          setPage={setReadingsPage}
+          perPage={READINGS_PER_PAGE}
+        />
       )}
 
       {/* ── Événements irrigation ── */}

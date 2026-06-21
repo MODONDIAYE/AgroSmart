@@ -45,7 +45,7 @@ class AuthController extends Controller
     // 1. Validation des données entrants
     $request->validate([
         'username' => 'required|string|min:3',
-        'email' => 'required|string|email|max:20|unique:users',
+        'email' => 'required|string|email|max:255|unique:users',
         'password' => 'required|string|min:6', // 'confirmed' cherche un champ password_confirmation
         'phone' => 'nullable|string|max:20',
     ]);
