@@ -81,11 +81,12 @@ class DeviceController extends Controller
             'location'    => 'sometimes|nullable|string|max:255',
             'status'      => 'sometimes|string',
             'crop_id'     => 'sometimes|nullable|exists:crops,id',
+            'mode'        => 'sometimes|in:manual,auto',
         ]);
 
         $oldCropId = $device->crop_id;
 
-        $device->update($request->only(['device_name', 'location', 'status', 'crop_id']));
+        $device->update($request->only(['device_name', 'location', 'status', 'crop_id', 'mode']));
         $device->load('crop');
 
         if ($request->has('crop_id') && $oldCropId !== $device->crop_id) {
@@ -221,7 +222,7 @@ class DeviceController extends Controller
      */
     public function updateSensors(Request $request, $id)
     {
-        $device = Device::findOrFail($id);
+        $device = Device::with('crop')->findOrFail($id);
 
         $data = $request->validate([
             'soil_humidity'    => 'nullable|numeric',
@@ -236,11 +237,11 @@ class DeviceController extends Controller
             'bme_pressure'     => 'nullable|numeric',
             'timestamp'        => 'nullable|date',
             'manual_mode'      => 'nullable|integer',
+            'pump_status'      => 'nullable|integer',
         ]);
 
         $timestamp = $data['timestamp'] ?? now();
 
-        // Mapping champ → sensor_name + unité
         $sensorMapping = [
             'soil_humidity'    => ['name' => 'Capacitive_Soil_Humidity',    'unit' => '%'],
             'soil_temperature' => ['name' => 'DS18B20_Soil_Temperature',    'unit' => '°C'],
@@ -269,66 +270,68 @@ class DeviceController extends Controller
             SensorData::insert($sensorRows);
         }
 
-        // Mise à jour du statut de l'appareil
         $device->update(['status' => 'online']);
-        $device->load('crop');
-        $crop = $device->crop;
 
-        // Alertes basées sur les seuils de la culture
-        if ($crop && !empty($sensorRows)) {
-            $notifications = [];
+        // ════ DÉCISION POMPE ════════════════════════════════════════
 
-            if (isset($data['soil_humidity']) && $data['soil_humidity'] < $crop->humidity_threshold) {
-                $notifications[] = [
-                    'title'   => 'Humidité du sol trop basse',
-                    'message' => "L'humidité du sol est de {$data['soil_humidity']}% — inférieure au seuil de {$crop->humidity_threshold}% pour {$crop->name}.",
-                    'type'    => 'warning',
-                ];
-            }
-
-            if (isset($data['water_level']) && $data['water_level'] < $crop->min_water_level) {
-                $notifications[] = [
-                    'title'   => "Niveau d'eau faible",
-                    'message' => "Le niveau d'eau est de {$data['water_level']}% — inférieur au seuil minimum de {$crop->min_water_level}%.",
-                    'type'    => 'warning',
-                ];
-            }
-
-            foreach ($notifications as $notification) {
-                Notification::create([
-                    'user_id'   => $device->user_id,
-                    'device_id' => $device->id,
-                    'title'     => $notification['title'],
-                    'message'   => $notification['message'],
-                    'body'      => $notification['message'],
-                    'type'      => $notification['type'],
-                    'is_read'   => false,
-                ]);
-            }
-        }
-
-        // ── Priorité 1 : switch physique actif → ESP32 se gère seul
-        if (isset($data['manual_mode']) && $data['manual_mode'] == 1) {
+        // PRIORITÉ 1 — Switch physique : l'ESP32 gère localement, on confirme
+        if (($data['manual_mode'] ?? 0) == 1) {
             return response()->json([
                 'success'      => true,
-                'message'      => 'Mode physique actif',
+                'mode'         => 'physical',
                 'pump_command' => 1,
             ]);
         }
 
-        // ── Priorité 2 : dernier ordre du Dashboard (boutons Irriguer / Arrêter)
-        // C'est le seul mode contrôlé depuis l'app — pas de mode auto
+        // PRIORITÉ 2 — Mode AUTO (sera configuré plus tard)
+        if ($device->mode === 'auto') {
+            return response()->json([
+                'success'      => true,
+                'mode'         => 'auto',
+                'pump_command' => $this->computeAutoCommand($device, $data),
+            ]);
+        }
+
+        // PRIORITÉ 3 — Mode MANUEL : dernier ordre des boutons Dashboard
         $lastEvent = IrrigationEvent::where('device_id', $device->id)
-            ->orderBy('timestamp', 'desc')
+            ->where('mode', 'manual')
+            ->orderByDesc('id')   // id évite les collisions de timestamp à la même seconde
             ->first();
 
-        $pumpCommand = ($lastEvent && $lastEvent->action == 1) ? 1 : 0;
+        $pumpCommand = ($lastEvent && (int) $lastEvent->action === 1) ? 1 : 0;
 
         return response()->json([
             'success'      => true,
-            'message'      => 'Données capteurs reçues avec succès',
+            'mode'         => 'manual',
             'pump_command' => $pumpCommand,
         ]);
+    }
+
+    /**
+     * Mode automatique avec hystérésis (anti-battement autour du seuil)
+     * Sera activé quand device.mode = 'auto'
+     */
+    private function computeAutoCommand(Device $device, array $data): int
+    {
+        $crop = $device->crop;
+        if (!$crop) return 0;
+
+        $soil  = $data['soil_humidity'] ?? null;
+        $water = $data['water_level']   ?? null;
+
+        if ($soil === null) return 0;
+
+        // Sécurité : réservoir vide → ne jamais pomper
+        if ($water !== null && $water <= $crop->min_water_level) return 0;
+
+        // Hystérésis : marge +5% pour éviter le battement au seuil
+        $threshold   = $crop->humidity_threshold;
+        $currentlyOn = ($data['pump_status'] ?? 0) == 1;
+
+        if ($currentlyOn) {
+            return ($soil >= $threshold + 5) ? 0 : 1;
+        }
+        return ($soil < $threshold) ? 1 : 0;
     }
 
     /**
@@ -370,24 +373,25 @@ class DeviceController extends Controller
             'timestamp'          => null,
         ];
 
-        // Une seule requête pour tous les capteurs, on garde la plus récente par capteur
-        $rows = SensorData::where('device_id', $id)
-            ->whereIn('sensor_name', $sensorNames)
-            ->orderByDesc('created_at')
-            ->get()
-            ->unique('sensor_name');
+        // Une requête par capteur sur les 100 dernières lignes — rapide avec l'index
+        foreach ($sensorNames as $sensorName) {
+            $row = SensorData::where('device_id', $id)
+                ->where('sensor_name', $sensorName)
+                ->orderByDesc('created_at')
+                ->select(['sensor_name', 'value', 'created_at'])
+                ->first();
 
-        foreach ($rows as $row) {
-            $field = $sensorMap[$row->sensor_name] ?? null;
-            if ($field) {
-                $latest[$field] = $row->value;
-                if (!$latest['timestamp'] || $row->created_at > $latest['timestamp']) {
-                    $latest['timestamp'] = $row->created_at;
+            if ($row) {
+                $field = $sensorMap[$sensorName] ?? null;
+                if ($field) {
+                    $latest[$field] = $row->value;
+                    if (!$latest['timestamp'] || $row->created_at > $latest['timestamp']) {
+                        $latest['timestamp'] = $row->created_at;
+                    }
                 }
             }
         }
 
-        // Volume total cumulé (somme de tous les débits enregistrés)
         $latest['total_volume'] = round(
             (float) SensorData::where('device_id', $id)
                 ->where('sensor_name', 'Flowmeter_Liters')
@@ -464,15 +468,17 @@ class DeviceController extends Controller
     }
 
     /**
-     * Toutes les données brutes des capteurs (avec pagination)
+     * Toutes les données brutes des capteurs (50 dernières par capteur)
      */
     public function allSensorData(Request $request, $id)
     {
         $request->user()->devices()->findOrFail($id);
 
+        // Limite aux 200 dernières lignes pour éviter les timeouts avec beaucoup de données
         $data = SensorData::where('device_id', $id)
             ->orderByDesc('created_at')
-            ->paginate(50);
+            ->limit(200)
+            ->get();
 
         return response()->json(['success' => true, 'data' => $data]);
     }

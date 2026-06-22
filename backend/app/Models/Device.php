@@ -16,6 +16,7 @@ class Device extends Model
         'device_key',
         'user_id',
         'status',
+        'mode',
         'location',
         'crop_id'
     ];

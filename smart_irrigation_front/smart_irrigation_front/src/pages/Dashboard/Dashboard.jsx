@@ -161,14 +161,16 @@ export default function Dashboard() {
   const [readings, setReadings]     = useState([]);
   const [events, setEvents]         = useState([]);
   const [loading, setLoading]       = useState(true);
-  const [pumping, setPumping]       = useState(false);   // bouton Irriguer en cours
-  const [stopping, setStopping]     = useState(false);   // bouton Arrêter en cours
-  const [isPumpOn, setIsPumpOn]     = useState(false);   // état réel de la pompe
+  const [pumping, setPumping]       = useState(false);
+  const [stopping, setStopping]     = useState(false);
+  const [isPumpOn, setIsPumpOn]     = useState(false);
+  const [deviceMode, setDeviceMode] = useState('manual'); // 'manual' | 'auto'
+  const [togglingMode, setTogglingMode] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [lastSync, setLastSync]     = useState(null);
-  const [liveCount, setLiveCount]   = useState(0); // nb de mises à jour auto
-  const [tick, setTick]             = useState(0); // force re-render pour les timestamps
+  const [liveCount, setLiveCount]   = useState(0);
+  const [tick, setTick]             = useState(0);
   const [readingsPage, setReadingsPage] = useState(1);
   const READINGS_PER_PAGE = 10;
   const timerRef = useRef(null);
@@ -182,7 +184,9 @@ export default function Dashboard() {
         setDevices(data.data);
         if (!activeDevice) {
           const agroDevice = data.data.find(d => d.device_name === 'AgroDevice');
-          setActiveDevice(agroDevice || data.data[0]);
+          const selected = agroDevice || data.data[0];
+          setActiveDevice(selected);
+          setDeviceMode(selected?.mode || 'manual');
         }
       }
     } catch (_) {}
@@ -260,6 +264,22 @@ export default function Dashboard() {
   // Ne dépend QUE de activeDevice.id — pas de loadSensorData pour éviter les boucles
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDevice?.id]);
+
+  // ── Bascule Manuel / Auto ───────────────────────────────────
+  const toggleMode = useCallback(async () => {
+    if (!activeDevice || togglingMode) return;
+    const next = deviceMode === 'auto' ? 'manual' : 'auto';
+    setTogglingMode(true);
+    try {
+      await deviceService.update(activeDevice.id, { mode: next });
+      setDeviceMode(next);
+      toast.success(next === 'auto' ? 'Mode automatique activé' : 'Mode manuel activé');
+    } catch (_) {
+      toast.error('Impossible de changer le mode');
+    } finally {
+      setTogglingMode(false);
+    }
+  }, [activeDevice, deviceMode, togglingMode]);
 
   // ── Irrigation manuelle ─────────────────────────────────────
   const handleManualIrrigate = async () => {
@@ -404,6 +424,20 @@ export default function Dashboard() {
             <p className="text-sm text-stone-500 font-body sm:ml-4">📍 {activeDevice.location}</p>
           )}
           <div className="sm:ml-auto flex items-center gap-3">
+            {/* Toggle Manuel / Auto */}
+            <button
+              onClick={toggleMode}
+              disabled={togglingMode}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-body font-medium transition-all ${
+                deviceMode === 'auto'
+                  ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
+                  : 'bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100'
+              }`}
+              title={deviceMode === 'auto' ? 'Passer en mode manuel' : 'Passer en mode automatique'}
+            >
+              <span>{deviceMode === 'auto' ? '🤖 Auto' : '🖐️ Manuel'}</span>
+            </button>
+
             {/* Indicateur état pompe */}
             <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-body font-medium transition-all ${
               isPumpOn
@@ -416,9 +450,9 @@ export default function Dashboard() {
 
             <button
               onClick={handleManualIrrigate}
-              disabled={pumping}
-              className="btn-primary py-2 transition-all"
-              title="Démarrer l'irrigation"
+              disabled={pumping || deviceMode === 'auto'}
+              className={`btn-primary py-2 transition-all ${deviceMode === 'auto' ? 'opacity-40 cursor-not-allowed' : ''}`}
+              title={deviceMode === 'auto' ? 'Désactivé en mode auto' : "Démarrer l'irrigation"}
             >
               <Play size={15} />
               {pumping ? 'Envoi…' : 'Irriguer'}
@@ -426,9 +460,9 @@ export default function Dashboard() {
 
             <button
               onClick={handleStop}
-              disabled={stopping}
-              className="btn-danger py-2 transition-all"
-              title="Arrêter l'irrigation"
+              disabled={stopping || deviceMode === 'auto'}
+              className={`btn-danger py-2 transition-all ${deviceMode === 'auto' ? 'opacity-40 cursor-not-allowed' : ''}`}
+              title={deviceMode === 'auto' ? 'Désactivé en mode auto' : "Arrêter l'irrigation"}
             >
               <StopCircle size={15} />
               {stopping ? 'Envoi…' : 'Arrêter'}
